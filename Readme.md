@@ -16,7 +16,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-3. Edit configuration at `app/Dependencies/config.yaml` as needed.
+3. Edit configuration at `app/dependencies/config.yaml` as needed.
 4. Run tests:
 
 ```powershell
@@ -24,8 +24,8 @@ python -m pytest test
 ```
 
 **Configuration**:
-- Main config: `app/Dependencies/config.yaml`.
-- Use the loader in `app/Dependencies/loadConfig.py` to read settings from code.
+- Main config: `app/dependencies/config.yaml`.
+- Use the loader in `app/dependencies/loadConfig.py` to read settings from code.
 
 **Project layout**:
 - `app/` — application code and dependencies

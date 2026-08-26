@@ -20,7 +20,7 @@ def load_main_module(config_values=None):
             "output_topic": "test/output",
         }
 
-    fake_loadConfig = types.ModuleType("Dependencies.loadConfig")
+    fake_loadConfig = types.ModuleType("dependencies.loadConfig")
 
     def return_config_value(key):
         if not key:
@@ -35,11 +35,11 @@ def load_main_module(config_values=None):
     fake_loadConfig.return_config_value = return_config_value
     fake_loadConfig.get_config = get_config
 
-    fake_pkg = types.ModuleType("Dependencies")
+    fake_pkg = types.ModuleType("dependencies")
     fake_pkg.loadConfig = fake_loadConfig
 
-    sys.modules["Dependencies"] = fake_pkg
-    sys.modules["Dependencies.loadConfig"] = fake_loadConfig
+    sys.modules["dependencies"] = fake_pkg
+    sys.modules["dependencies.loadConfig"] = fake_loadConfig
 
     spec_name = f"main_mod_{uuid.uuid4().hex}"
     spec = importlib.util.spec_from_file_location(spec_name, APP_DIR / "main.py")
