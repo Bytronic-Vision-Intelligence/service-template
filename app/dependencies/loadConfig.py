@@ -10,14 +10,17 @@ LOCAL_CONFIG_PATH = Path(__file__).resolve().parents[1] / "configs" / "config.ya
 def _config_path() -> Path:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--config", default=None)
+    parser.add_argument("--test", action="store_true")
     args, _ = parser.parse_known_args()
     if args.config:
         return Path(args.config)
-    return LOCAL_CONFIG_PATH
+    if args.test:
+        return LOCAL_CONFIG_PATH
+    raise SystemExit("Missing required --config path (or pass --test to use local config).")
 
 
 def get_config() -> dict:
-    """Read config from ``--config`` path, else local ``config.yaml``.
+    """Read config from ``--config`` path, or local ``config.yaml`` with ``--test``.
 
     Returns an empty dict if the file is missing or empty.
     """
