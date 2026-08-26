@@ -2,21 +2,35 @@ import yaml
 from pathlib import Path
 
 
-def _config_path() -> Path:
+def get_local_config_path() -> Path:
     return Path(__file__).resolve().parent / "config.yaml"
 
 
-def get_config() -> dict:
-    """Read and return configuration from the local `config.yaml` next to this module.
-
-    Returns an empty dict if the file is missing or empty.
-    """
-    path = _config_path()
-    if not path.exists():
+def load_yaml(path: Path) -> dict:
+    if not path.is_file():
         return {}
     with open(path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
-    return config
+        data = yaml.safe_load(f) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def get_config() -> dict:
+    """Load config from the orchestrator root, else fall back to local config.yaml.
+
+    Orchestrator layout (cwd = this worker's root):
+
+        service-orchestrator/config.yaml  -> section keyed by worker dir name
+        service-orchestrator/<worker>/
+
+    If that file or section is missing, use ``app/dependencies/config.yaml``.
+    """
+    worker_dir = Path.cwd().resolve()
+    orch_path = worker_dir.parent / "config.yaml"
+    section = load_yaml(orch_path).get(worker_dir.name)
+    if isinstance(section, dict):
+        return section
+
+    return load_yaml(get_local_config_path())
 
 
 def return_config_value(key: str) -> str:
