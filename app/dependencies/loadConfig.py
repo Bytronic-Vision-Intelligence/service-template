@@ -1,13 +1,23 @@
 import yaml
+import argparse
 from pathlib import Path
 
 
+# app/dependencies/loadConfig.py -> app/configs/config.yaml
+LOCAL_CONFIG_PATH = Path(__file__).resolve().parents[1] / "configs" / "config.yaml"
+
+
 def _config_path() -> Path:
-    return Path(__file__).resolve().parent / "config.yaml"
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", default=None)
+    args, _ = parser.parse_known_args()
+    if args.config:
+        return Path(args.config)
+    return LOCAL_CONFIG_PATH
 
 
 def get_config() -> dict:
-    """Read and return configuration from the local `config.yaml` next to this module.
+    """Read config from ``--config`` path, else local ``config.yaml``.
 
     Returns an empty dict if the file is missing or empty.
     """
