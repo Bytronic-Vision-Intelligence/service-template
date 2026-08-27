@@ -1,5 +1,20 @@
+# Python
 *.pyc
-*__pycache__
-.log
-*claude
-*github
+__pycache__/
+*.egg-info/
+/config.yaml
+/config-*.yaml
+junit/
+.pytest_cache/
+.ruff_cache/
+docs/superpowers/
+.vscode/
+.idea/
+.claude/
+.DS_Store
+
+*.log
+
+# act run byproducts (docker-local/run.sh)
+docker-local/logs/
+docker-local/artifacts/

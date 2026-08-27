@@ -1,0 +1,24 @@
+# Default configuration for standalone runs (python app/main.py --test).
+#
+# In deployment this file is NOT used: service-orchestrator writes the real
+# config into this repository's root and launches the service with
+# `app/main.py --config <path>`. Keep this file as a documented example of the
+# shape a service section must have.
+
+# Broker connection ------------------------------------------------------
+broker_details:
+  mqtt_ip: localhost
+  mqtt_port: 1883
+
+# MQTT topics ------------------------------------------------------------
+# is_subscribe: this service listens on the topic
+# is_trigger:   a message here starts a unit of work
+topics:
+  - name: trigger
+    topic: template/worker/trigger
+    is_subscribe: true
+    is_trigger: true
+  - name: output
+    topic: template/worker/output
+    is_subscribe: false
+    is_trigger: false
