@@ -14,3 +14,7 @@ docs/superpowers/
 .DS_Store
 
 *.log
+
+# act run byproducts (docker-local/run.sh)
+docker-local/logs/
+docker-local/artifacts/
