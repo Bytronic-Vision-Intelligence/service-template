@@ -2,6 +2,11 @@
 *.pyc
 __pycache__/
 *.egg-info/
+
+# Virtualenvs. service-orchestrator expects one per service at <repo>/.venv
+.venv/
+venv/
+
 /config.yaml
 /config-*.yaml
 junit/
