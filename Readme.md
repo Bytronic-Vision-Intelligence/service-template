@@ -77,6 +77,41 @@ To take part, a service must:
    `config-2.yaml`, and so on
 5. Leave `/config.yaml` and `/config-*.yaml` gitignored
 
+## Releasing
+
+`.github/workflows/release-pipeline.yml` builds a binary for Linux, Windows and
+macOS, packages each with `config.yaml` and a `logs/` folder, signs every zip
+with the shared SERVICE key and publishes them as a GitHub release.
+
+**It triggers on a push to `prod`, and `prod` must contain the workflow file.**
+
+GitHub runs a branch-triggered workflow as it exists *on the branch that was
+pushed*. A `prod` branch created before this pipeline existed does not contain
+it, so pushing to `prod` runs whatever workflows that branch does have and this
+one never fires -- no error, no run, no release, nothing to notice. That is the
+entire reason two finished pipelines in this organisation have never produced a
+release. Keep `prod` current with `main`.
+
+Two things must be set before a release can succeed:
+
+- `SERVICE_SIGNING_KEY` -- a repository secret holding the private half of the
+  shared SERVICE signing key. It is a repository secret rather than an
+  organisation one because the service repositories are a mix of public and
+  private, and on the current plan an organisation secret reaches only the
+  public ones -- silently covering three of eight.
+- `EXPECTED_PUBLIC_KEY` in `scripts/sign.py` -- the matching public half,
+  committed in the open.
+
+Signing refuses to run unless both are present and they agree. A secret pasted
+from the wrong place is otherwise invisible: it produces perfectly valid
+signatures that the orchestrator refuses months later, on a customer machine,
+naming a binary that was never at fault.
+
+Dependencies are split so that none of this reaches a customer:
+`requirements.txt` is runtime-only and is what gets built into the binary,
+`requirements-dev.txt` adds the test tooling, and `requirements-signing.txt` is
+installed only by the release job.
+
 ## Running CI locally
 
 `docker-local/` runs `.github/workflows/` on your machine through
