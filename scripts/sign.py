@@ -21,12 +21,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 #: Hex of the raw 32-byte public half of the SERVICE signing key -- the one
 #: shared across every service repository and trusted by the orchestrator.
 #:
-#: Ships EMPTY. A value here is trusted by every service that copies this
-#: template, so it may only ever be the team's real key, added deliberately
-#: once the pair is generated (scripts/keygen.py in release-service). Until
-#: then signing refuses to run rather than producing artefacts nobody can
-#: attribute. Pinned by test/test_sign.py::test_the_expected_key_ships_unset
-EXPECTED_PUBLIC_KEY = ""
+#: This is bvi-svc-2026-09. Its private half is held as SERVICE_SIGNING_KEY in
+#: every repository that signs a binary, and nowhere else.
+#:
+#: It is NOT the orchestrator key. That one signs the orchestrator binary,
+#: lives in a single private repository, and is what release-service trusts to
+#: mean "genuinely ours". This one is shared across eight repositories, three
+#: of them public, so a key that was both would let any service repository
+#: forge an orchestrator. Keeping them apart is the point of the three-key
+#: split.
+EXPECTED_PUBLIC_KEY = "8af4436a6ed698c33419fc781dd946db03eb7e712fc551dfc46d4ce925c31ee8"
 
 
 def _signing_key() -> Ed25519PrivateKey:

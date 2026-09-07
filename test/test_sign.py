@@ -108,8 +108,32 @@ def test_a_missing_artefact_is_refused(key, tmp_path):
         sign.sign_file(tmp_path / "never-built.zip")
 
 
-def test_the_expected_key_ships_unset():
-    """Flip this the day the SERVICE key is generated and recorded, and not
-    before: a value here is trusted by every service that copies this template,
-    so it may only ever be the team's real key."""
-    assert sign.EXPECTED_PUBLIC_KEY == ""
+#: The team's SERVICE signing key, whose private half is held as
+#: SERVICE_SIGNING_KEY in every repository that signs a binary.
+SHIPPED_KEY = "8af4436a6ed698c33419fc781dd946db03eb7e712fc551dfc46d4ce925c31ee8"
+
+
+def test_the_expected_key_is_the_team_key():
+    """A value here is trusted by every service that copies this template, so
+    it may only ever be the team's real key. Pinned exactly rather than merely
+    "not empty": a placeholder, a truncated paste or somebody's local test key
+    would all satisfy the looser check."""
+    assert sign.EXPECTED_PUBLIC_KEY == SHIPPED_KEY
+
+
+def test_the_expected_key_is_a_usable_ed25519_public_key():
+    """A hand-pasted 64-hex string is one character away from bytes that are
+    the wrong length or not a point on the curve. Caught here, it costs
+    nothing; caught at release time it stops a build for reasons that read
+    like a key mismatch."""
+    Ed25519PublicKey.from_public_bytes(bytes.fromhex(sign.EXPECTED_PUBLIC_KEY))
+
+
+def test_the_expected_key_is_not_the_orchestrator_key():
+    """The orchestrator key signs the orchestrator binary, lives in one private
+    repository, and is what release-service trusts to mean "genuinely ours".
+    This key is shared across eight repositories, three of them public. One key
+    serving both would let any service repository forge an orchestrator -- and
+    the orchestrator binary is the one signature no customer can check."""
+    ORCHESTRATOR_KEY = "40f59afe5701eac2e4084e7a9cc0fcd586c7a576908e8e534248f9d1a264d760"
+    assert sign.EXPECTED_PUBLIC_KEY != ORCHESTRATOR_KEY
