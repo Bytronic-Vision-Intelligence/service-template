@@ -5,6 +5,7 @@ A service takes no path argument. `config.yaml` sits beside its binary and the
 orchestrator writes it there, so every test here is about that single rule and
 the one way it is easy to get wrong.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -61,8 +62,14 @@ def test_a_missing_config_stops_the_service(rooted):
 
 def test_the_refusal_names_where_it_looked(rooted):
     """An operator who put the file in the wrong place needs the path, not
-    just the filename."""
-    with pytest.raises(SystemExit, match=str(rooted)):
+    just the filename.
+
+    re.escape because a Windows path is full of backslashes, and `match` is a
+    regex: `C:\\Users\\...` raises "incomplete escape \\U" rather than
+    failing the assertion, so the test breaks on the platform it still has to
+    pass on.
+    """
+    with pytest.raises(SystemExit, match=re.escape(str(rooted))):
         loadConfig.get_config()
 
 
