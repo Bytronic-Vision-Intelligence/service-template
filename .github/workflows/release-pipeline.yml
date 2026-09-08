@@ -43,9 +43,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
 
-    # No secret is available to this job, by design. It runs on three runners
-    # including Windows and macOS; the signing key is needed on exactly one, so
-    # it is used in `release` instead and never reaches the others.
+    # No secret is available to this job, by design. The signing key is needed
+    # on exactly one runner, so it is used in `release` instead and never
+    # reaches the build legs.
+    #
+    # macOS is deliberately not built: no customer runs one. It also removes
+    # the Gatekeeper problem, which an unsigned macOS binary hits on first
+    # launch -- "cannot be opened because the developer cannot be verified" --
+    # and which only an Apple Developer certificate solves. Add the leg back
+    # alongside that certificate, not before it.
     strategy:
       fail-fast: false
       matrix:
@@ -54,8 +60,6 @@ jobs:
             runner: ubuntu-latest
           - platform: windows-amd64
             runner: windows-latest
-          - platform: macos-arm64
-            runner: macos-latest
 
     steps:
       - name: Check out repository
