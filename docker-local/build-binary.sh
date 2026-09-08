@@ -113,8 +113,11 @@ cp "$REPO_ROOT/app/dependencies/config.yaml" "$BUILD/config.yaml"
 chmod 644 "$BUILD/$(basename "$SCRIPT_PATH" .py)"
 echo "==> simulated the artifact round-trip (executable bit stripped)"
 
-"$REPO_ROOT/scripts/package.sh" "$TREE/.pkg/build" "$TREE/.pkg/upload" \
-  service-template "$SCRIPT_PATH" >/dev/null
+# Invoked exactly as the workflow does: from the directory holding `build/`,
+# with RELATIVE paths. Passing absolute ones here is what let a broken relative
+# out-dir reach production - the local run resolved it and CI did not.
+( cd "$TREE/.pkg" && "$REPO_ROOT/scripts/package.sh" build upload \
+    service-template "$SCRIPT_PATH" ) >/dev/null
 
 ZIP="$TREE/.pkg/upload/service-template-linux-amd64.zip"
 [ -f "$ZIP" ] || { echo "==> FAIL: packaging produced no zip"; exit 1; }

@@ -32,6 +32,14 @@ SCRIPT_PATH="${4:?missing entry script}"
 
 binary="$(basename "$SCRIPT_PATH" .py)"
 mkdir -p "$OUT_DIR"
+
+# Resolved to an absolute path HERE, once, before anything changes directory.
+# The zip below runs in a subshell that has cd'd into the build directory, so a
+# relative out-dir would be resolved against THAT - and the workflow passes a
+# relative one ("upload"). Getting this wrong does not fail loudly: the
+# substitution yields nothing and zip tries to write to the filesystem root.
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+
 shopt -s nullglob
 
 found=0
@@ -47,7 +55,7 @@ for dir in "$BUILD_DIR"/build-*; do
   # here where nothing can drop it before the zip is written.
   mkdir -p "$dir/logs"
 
-  ( cd "$dir" && zip -qr "$(cd "$OUT_DIR" && pwd)/${SERVICE}-${platform}.zip" . )
+  ( cd "$dir" && zip -qr "${OUT_DIR}/${SERVICE}-${platform}.zip" . )
   found=$((found + 1))
 done
 
