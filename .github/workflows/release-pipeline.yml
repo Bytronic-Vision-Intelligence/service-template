@@ -76,7 +76,7 @@ jobs:
           test -f app/main.py
           test -f requirements.txt
           test -d app/dependencies
-          test -f app/dependencies/config.yaml
+          test -f config.yaml
           echo "Layout looks like a Bytronic service."
 
       # Pinned to a commit rather than @master: this action turns source into
@@ -113,11 +113,10 @@ jobs:
         run: |
           set -euo pipefail
           output_dir="./dist/${{ matrix.platform }}"
-          # Beside the executable, so an operator can edit it after extracting.
-          # logs/ is NOT created here: an empty directory does not survive an
-          # artifact upload, so scripts/package.sh makes it at packaging time
-          # where nothing can drop it. One owner, not two.
-          cp app/dependencies/config.yaml "$output_dir/config.yaml"
+          # Beside the executable, which is exactly where the service reads
+          # it from. The orchestrator overwrites it on deployment; this copy is
+          # the documented starting point.
+          cp config.yaml "$output_dir/config.yaml"
 
       - name: Verify build output
         run: |

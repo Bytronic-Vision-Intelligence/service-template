@@ -12,9 +12,10 @@ pass, because there is only one place to look.
             camera-service       <- the binary
             config.yaml          <- written here by the orchestrator
 
-The bundled copy in this repository is not deployment configuration. It is the
-documented shape of a section, so the loader and anyone reading the repo can
-see what a service accepts.
+The tracked ``config.yaml`` at the repository root is not deployment
+configuration. It is the documented shape of a section, so anyone reading the
+repository can see what a service accepts, and the release package ships a copy
+beside the binary as a starting point.
 
 Finding "beside the binary" is the one subtle part. Once PyInstaller has frozen
 the service, ``__file__`` points inside ``sys._MEIPASS`` -- a temporary

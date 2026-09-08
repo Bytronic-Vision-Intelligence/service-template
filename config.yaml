@@ -1,0 +1,33 @@
+# The shape of a service's configuration.
+#
+# A service reads THIS file from the directory it runs from -- beside its own
+# binary once packaged -- and service-orchestrator overwrites it from its own
+# config, which is the single source of truth. Nothing here is deployment
+# configuration; it is the documented shape, and a starting point that ships
+# beside the binary.
+
+# Topic namespace for this installation.
+project: project
+
+mqtt:
+  mqtt_ip: localhost
+  mqtt_port: 1883
+  qos: 1
+
+  # is_subscribe: this service listens on the topic
+  # is_trigger:   a message here starts a unit of work
+  topics:
+    - name: topic_name
+      topic: project/source/ID/type
+      is_subscribe: true
+      is_trigger: true
+
+# Settings specific to this service. Empty in the template.
+service: {}
+
+# How much this service says. It writes no log files: it prints, the
+# orchestrator forwards every line to project/logging/<service>, and
+# logging-service is the only thing that writes to disk.
+# DEBUG | INFO | WARNING | ERROR | CRITICAL
+logging:
+  level: INFO

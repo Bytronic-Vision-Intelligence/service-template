@@ -114,7 +114,7 @@ fi
 BUILD="$TREE/.pkg/build/build-linux-amd64"
 rm -rf "$TREE/.pkg"; mkdir -p "$BUILD"
 cp "$BINARY" "$BUILD/"
-cp "$REPO_ROOT/app/dependencies/config.yaml" "$BUILD/config.yaml"
+cp "$REPO_ROOT/config.yaml" "$BUILD/config.yaml"
 
 # The damage an artifact round-trip does: the executable bit is not preserved,
 # and an empty directory is not stored.
@@ -154,4 +154,76 @@ else
 fi
 
 [ "$fail" -eq 0 ] || { echo "==> FAIL: the packaged zip is not usable as shipped"; exit 1; }
-echo "==> PASS: built, packaged, unpacked, and launched"
+
+# ---------------------------------------------------------------------------
+# Does the packaged binary do its JOB, not merely start?
+#
+# A service that connects, subscribes, logs "Subscribed to ..." and then
+# silently receives nothing looks completely healthy: every log line is
+# reassuring and no error is ever printed. Running it with --help does not
+# notice, unpacking the zip does not notice, and the unit tests exercise the
+# functions from source where this works.
+#
+# So the binary is run against a real broker and sent a real message.
+# ---------------------------------------------------------------------------
+NET=tpl-check-net
+BROKER=tpl-check-broker
+SERVICE=tpl-check-svc
+cleanup() {
+  docker rm -f "$SERVICE" "$BROKER" >/dev/null 2>&1 || true
+  docker network rm "$NET" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "==> end-to-end: the binary against a real broker"
+cleanup
+docker network create "$NET" >/dev/null
+docker run -d --rm --name "$BROKER" --network "$NET" eclipse-mosquitto:2 \
+  sh -c 'printf "listener 1883\nallow_anonymous true\n" > /m.conf && mosquitto -c /m.conf' >/dev/null
+
+RUN="$TREE/.pkg/run"
+rm -rf "$RUN"; mkdir -p "$RUN"
+cp "$TREE/.pkg/x/$(basename "$SCRIPT_PATH" .py)" "$RUN/"
+sed "s/mqtt_ip: .*/mqtt_ip: $BROKER/" "$TREE/.pkg/x/config.yaml" > "$RUN/config.yaml"
+TOPIC=$(awk '/^ *- name:/{n=1} n&&/^ *topic:/{gsub(/^ *topic: *"?|"? *$/,""); print; exit}' "$RUN/config.yaml")
+: "${TOPIC:?could not read a topic out of config.yaml}"
+echo "    topic: $TOPIC"
+
+# Wait for the broker rather than sleeping a guessed amount.
+for _ in $(seq 1 20); do
+  docker exec "$BROKER" mosquitto_pub -h localhost -t ping -m x >/dev/null 2>&1 && break
+  sleep 0.5
+done
+
+docker run -d --rm --name "$SERVICE" --network "$NET" --platform linux/amd64 \
+  -e PYTHONUNBUFFERED=1 -v "$RUN:/svc" -w /svc "python:${PYTHON_VERSION}-slim" \
+  "/svc/$(basename "$SCRIPT_PATH" .py)" >/dev/null
+
+for _ in $(seq 1 20); do
+  docker logs "$SERVICE" 2>&1 | grep -q "Subscribed to" && break
+  sleep 0.5
+done
+docker logs "$SERVICE" 2>&1 | grep -q "Subscribed to" \
+  || { echo "    FAIL: the binary never subscribed"; docker logs "$SERVICE" 2>&1 | tail -5; exit 1; }
+echo "    subscribed  ok"
+
+docker exec "$BROKER" mosquitto_pub -h localhost -t "$TOPIC" -m '{"command":"run"}'
+received=0
+for _ in $(seq 1 20); do
+  if docker logs "$SERVICE" 2>&1 | grep -q "Request received"; then received=1; break; fi
+  sleep 0.5
+done
+
+if [ "$received" -eq 1 ]; then
+  echo "    receives    ok"
+else
+  echo "    receives    NO - it subscribed and then ignored the message"
+  echo
+  echo "    The binary connects, subscribes and logs success, so nothing in its"
+  echo "    output suggests a problem. It simply never does any work. This"
+  echo "    passes from source, which is why unit tests do not see it."
+  docker logs "$SERVICE" 2>&1 | tail -6 | sed 's/^/      /'
+  exit 1
+fi
+
+echo "==> PASS: built, packaged, unpacked, launched, and processed a message"

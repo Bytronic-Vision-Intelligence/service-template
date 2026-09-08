@@ -25,8 +25,7 @@ pip install -r requirements.txt
 Run it, with a `config.yaml` in the repository root:
 
 ```bash
-cp app/dependencies/config.yaml ./config.yaml   # a starting point
-python app/main.py
+python app/main.py     # reads ./config.yaml
 ```
 
 Run the tests:
@@ -52,9 +51,9 @@ Starting unconfigured would be worse than not starting: the service would come
 up subscribed to nothing, publishing nowhere, and look healthy to anything
 watching it.
 
-`app/dependencies/config.yaml` is **not** deployment config. It documents the
-shape of a section, and the release package ships a copy beside the binary as a
-starting point which the orchestrator then overwrites.
+The tracked `config.yaml` at the repository root is **not** deployment config.
+It documents the shape a section may take, and the release package ships a copy
+beside the binary as a starting point which the orchestrator then overwrites.
 
 Finding "beside the binary" is the one subtle part: once frozen, `__file__`
 points inside PyInstaller's temporary extraction directory, so a config

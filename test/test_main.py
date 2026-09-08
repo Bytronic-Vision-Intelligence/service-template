@@ -8,7 +8,7 @@ import main
 
 
 def make_topics():
-    """The shape shipped in app/dependencies/config.yaml, plus a non-trigger feed."""
+    """The shape shipped in the root config.yaml, plus a non-trigger feed."""
     return [
         {
             "name": "trigger",
@@ -37,9 +37,9 @@ def test_require_returns_the_value_when_present():
 
 def test_require_exits_naming_the_missing_key():
     with pytest.raises(SystemExit) as excinfo:
-        main.require({}, "broker_details")
+        main.require({}, "mqtt")
 
-    assert "broker_details" in str(excinfo.value)
+    assert "mqtt" in str(excinfo.value)
 
 
 def test_output_topics_returns_only_the_unsubscribed_topics():
@@ -103,16 +103,17 @@ def test_start_subscribers_spawns_only_for_subscribed_topics(monkeypatch):
     assert "queue" not in topics[2]
 
 
-def test_worker_process_function_prints_the_placeholder(capsys):
-    main.worker_process_function(None, {"command": "run"}, [])
+def test_service_process_function_prints_the_placeholder(capsys):
+    main.service_process_function(None, {"command": "run"}, [])
 
     assert "insert your program here" in capsys.readouterr().out
 
 
 def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):
     config = {
-        "broker_details": {"mqtt_ip": "127.0.0.1", "mqtt_port": 1883},
-        "topics": make_topics(),
+        "mqtt": {"mqtt_ip": "127.0.0.1", "mqtt_port": 1883,
+                 "topics": make_topics()},
+        "service": {},
     }
     monkeypatch.setattr(main.loadConfig, "get_config", lambda: config)
     monkeypatch.setattr(main, "MQTTClient", FakeMQTTClient)
@@ -134,7 +135,7 @@ def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):
     handled = []
     monkeypatch.setattr(
         main,
-        "worker_process_function",
+        "service_process_function",
         lambda client, message, outputs: handled.append((message, outputs)),
     )
 
@@ -216,3 +217,26 @@ def test_main_answers_help_before_looking_for_a_config(monkeypatch):
     with pytest.raises(SystemExit) as exit_info:
         main.main(["--help"])
     assert exit_info.value.code == 0
+
+
+def test_a_section_present_but_empty_is_refused():
+    """`service:` written and left blank is a section somebody meant to fill
+    in. Letting it through moves the failure to whatever first subscripts it,
+    a stack frame away from the config that caused it."""
+    with pytest.raises(SystemExit, match="mqtt"):
+        main.require({"mqtt": None}, "mqtt")
+
+
+def test_the_config_shipped_in_the_repo_satisfies_what_main_requires():
+    """The root config.yaml is what a customer receives beside the binary. If
+    it lacks a key main requires, every fresh install fails on first start."""
+    import yaml
+    from pathlib import Path
+
+    config = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text())
+    mqtt = main.require(config, "mqtt")
+    main.require(mqtt, "topics")
+    main.require(config, "service")
+    for key in ("mqtt_ip", "mqtt_port"):
+        assert key in mqtt, f"{key} missing from the shipped config"
