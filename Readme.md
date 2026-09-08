@@ -163,4 +163,4 @@ still fail on GitHub.
 - `test/` — pytest suite
 - `tools/` — helper scripts
 
-License: see `docs/LISENCE`.
+License: see `docs/LICENSE`.
