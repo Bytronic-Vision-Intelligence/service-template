@@ -30,7 +30,12 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 
 # The flags come out of the workflow rather than being repeated here, so this
 # tracks what CI actually passes instead of drifting away from it.
-SCRIPT_PATH=$(awk -F'"' '/^ *scripts:/ {print $2; exit}' "$WORKFLOW")
+# The entry script is declared once, as a workflow-level `env: SCRIPT:`, and
+# the build step references it as ${{ env.SCRIPT }}. Read the declaration, not
+# the reference. The second form is the fallback for a repo that still names
+# the script inline in `scripts:`.
+SCRIPT_PATH=$(sed -n 's/^ *SCRIPT: *//p' "$WORKFLOW" | head -1 | tr -d "\"'")
+[ -n "$SCRIPT_PATH" ] || SCRIPT_PATH=$(awk -F'"' '/^ *scripts:/ {print $2; exit}' "$WORKFLOW")
 EXTRA_ARGS=$(awk -F': ' '/^ *additional-args:/ {sub(/^ +/,"",$2); print $2; exit}' "$WORKFLOW")
 # Strip surrounding quotes: `additional-args: ""` must mean no arguments, not a
 # literal empty string, which PyInstaller would take as the script name.

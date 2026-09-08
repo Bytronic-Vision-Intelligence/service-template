@@ -192,3 +192,44 @@ def test_the_release_output_paths_are_gitignored():
         assert path in ignored, f"{path} is not gitignored"
         assert path.rstrip("/") in workflow_text, \
             f"{path} is ignored but the workflow no longer writes there"
+
+
+def test_the_upload_keeps_hidden_files(workflow):
+    """`logs/` is kept by a `.gitkeep`, and actions/upload-artifact@v4 excludes
+    dotfiles unless told otherwise. Without this the file is dropped, the
+    directory is then empty, and an empty directory is not stored either -- so
+    `logs/` silently never reaches the customer, while every step still passes.
+
+    That is not hypothetical: release prod-1 shipped without it."""
+    uploads = [s for s in _all_steps(workflow)
+               if "upload-artifact" in str(s.get("uses", ""))]
+    assert uploads, "no upload step found"
+    for step in uploads:
+        assert step["with"].get("include-hidden-files") is True, \
+            "the upload drops dotfiles, so logs/ will not reach the customer"
+
+
+def test_the_binary_is_made_executable_before_zipping(workflow):
+    """actions/upload-artifact cannot preserve the executable bit, so the binary
+    arrives at packaging as 0644 and zips as 0644. The customer unzips something
+    they cannot run, and no privilege fixes it -- Linux requires at least one x
+    bit even for root.
+
+    prod-1 shipped a `-rw-r--r--` binary. Every job was green."""
+    step = _step_running(workflow, "zip -qr")
+    run = _run(step)
+    assert "chmod +x" in run, "nothing restores the executable bit"
+    # Chained to the declared entry script, not a hardcoded name, so renaming
+    # the script cannot leave this chmod-ing a file that no longer exists.
+    assert "$SCRIPT" in str(step.get("env", {})) or "$SCRIPT" in run
+    assert 'basename "$SCRIPT"' in run
+
+
+def test_the_entry_script_is_declared_once(workflow):
+    """The build passes it to PyInstaller and packaging derives the binary name
+    from it. Two copies would disagree silently the day a service renames it."""
+    assert workflow["env"]["SCRIPT"] == "app/main.py"
+    builds = [s for s in _all_steps(workflow)
+              if "python-binary-action" in str(s.get("uses", ""))]
+    for step in builds:
+        assert step["with"]["scripts"] == "${{ env.SCRIPT }}"

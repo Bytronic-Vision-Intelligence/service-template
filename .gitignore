@@ -26,6 +26,7 @@ docker-local/artifacts/
 
 # Clean tree built by docker-local/run.sh --release
 docker-local/.tree/
+docker-local/.release-check/
 
 # Release build output. The release workflow writes binaries to dist/ and zips
 # to upload/; anything that runs it outside CI leaves them in the working tree,

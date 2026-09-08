@@ -27,6 +27,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # The service's entry script, named once. The build passes it to PyInstaller;
+  # packaging derives the binary's name from it to restore the executable bit.
+  # Two copies of this would silently disagree the day a service renames it.
+  SCRIPT: app/main.py
+
 defaults:
   run:
     shell: bash
@@ -75,7 +81,7 @@ jobs:
       - name: Build application
         uses: espressif/python-binary-action@b7d9c899ef131570d6be8b7ba7c8d21f9b268c82
         with:
-          scripts: "app/main.py"
+          scripts: ${{ env.SCRIPT }}
           output-dir: "./dist/${{ matrix.platform }}"
           target-platform: ${{ matrix.platform }}
           # requirements.txt is runtime-only, so the binary does not carry a
@@ -116,11 +122,17 @@ jobs:
           test -d "$output_dir/logs"
           test "$(find "$output_dir" -type f | wc -l)" -gt 1
 
+      # include-hidden-files, because logs/ is kept by a .gitkeep and v4
+      # excludes dotfiles by default. Without it the file is dropped, the
+      # directory is then empty, and an empty directory is not stored either --
+      # so `logs/` silently never reaches the customer. Pinned by
+      # test/test_release_pipeline.py::test_the_upload_keeps_hidden_files
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.platform }}
           path: "./dist/${{ matrix.platform }}"
+          include-hidden-files: true
           if-no-files-found: error
 
   release:
@@ -152,13 +164,24 @@ jobs:
       - name: Package each platform
         env:
           SERVICE: ${{ github.event.repository.name }}
+          SCRIPT: ${{ env.SCRIPT }}
         run: |
           set -euo pipefail
           mkdir -p upload
           shopt -s nullglob
+          # The binary's name, from the one place the entry script is declared.
+          binary="$(basename "$SCRIPT" .py)"
           found=0
           for dir in build/build-*; do
             platform="${dir#build/build-}"
+            # actions/upload-artifact does not preserve the executable bit -- it
+            # cannot, the format has no place for it -- so the binary arrives
+            # here as 0644 and zips as 0644. A customer then unzips something
+            # they cannot run, and no privilege fixes it: Linux requires at
+            # least one x bit even for root. Restored here rather than trusted.
+            for candidate in "$dir/$binary" "$dir/$binary.exe"; do
+              [ -f "$candidate" ] && chmod +x "$candidate"
+            done
             ( cd "$dir" && zip -qr "../../upload/${SERVICE}-${platform}.zip" . )
             found=$((found + 1))
           done

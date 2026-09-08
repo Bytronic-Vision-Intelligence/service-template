@@ -22,6 +22,7 @@ containers are siblings of the runner, not children.
 ./run.sh             # checks: what a pull request would run
 ./run.sh --release   # build the binary and smoke-test it
 ./run.sh --all       # checks, then the binary build
+./run.sh --verify-release [tag]   # check a PUBLISHED release
 ./run.sh -j build    # one job
 ./run.sh pull_request
 ./run.sh --fresh     # wipe act's toolcache volume first
@@ -56,6 +57,19 @@ This catches the failure mode nothing else can. A binary that is missing an
 import still *builds*, at full size, with no warning — it dies the first time
 it is run. Unit tests cannot see it, and neither can anything that only reads
 the workflow file. It is what took the first `prod` release down.
+
+### Verifying a published release
+
+`./run.sh --verify-release` downloads a release and checks it the way a
+customer receives it: the detached signature verifies under the key committed
+in `scripts/sign.py`, the zip matches `SHA256SUMS`, the binary inside is
+**executable**, and `config.yaml` and `logs/` are present.
+
+This is the only check that sees what actually ships. The build tests a binary
+before it is uploaded, and `build-binary.sh` never goes through an artifact at
+all — so neither can see anything lost in the round-trip between the build and
+packaging jobs. Release `prod-1` passed every job and shipped a binary the
+customer could not execute, with `logs/` missing, on all three platforms.
 
 Both builds run against a clean copy of the **tracked** tree, never the live
 working directory. The act mount is read-write, so a build running `uv venv` in
