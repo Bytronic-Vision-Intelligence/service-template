@@ -5,13 +5,18 @@ Each of these silently stops being true if someone edits the YAML, and nothing
 else in the suite would notice. This file is copied into every service that
 uses the template, so a property broken here is broken everywhere.
 """
+import os
 import re
 from pathlib import Path
 
 import pytest
 import yaml
 
-WORKFLOW = Path(__file__).resolve().parent.parent / ".github/workflows/release-pipeline.yml"
+ROOT = Path(__file__).resolve().parent.parent
+WORKFLOW = ROOT / ".github/workflows/release-pipeline.yml"
+#: The packaging logic lives in a script so CI and the local runner execute the
+#: same code; assertions about packaging belong against it, not the YAML.
+PACKAGER = ROOT / "scripts/package.sh"
 
 
 @pytest.fixture(scope="module")
@@ -110,12 +115,11 @@ def test_the_release_is_published_with_the_signatures(workflow):
     assert "SHA256SUMS" in _run(step)
 
 
-def test_an_empty_download_is_not_published_as_a_release(workflow):
+def test_an_empty_download_is_not_published_as_a_release():
     """`gh release create` with no files succeeds and publishes an empty
     release. Without this guard a failed matrix leg produces a release a
     customer can download nothing from."""
-    step = _step_running(workflow, "zip -qr")
-    assert re.search(r'"\$found"\s+-eq\s+0', _run(step)), \
+    assert re.search(r'"\$found"\s+-eq\s+0', PACKAGER.read_text()), \
         "nothing checks that any platform was actually packaged"
 
 
@@ -123,9 +127,19 @@ def test_artefact_names_come_from_the_repository(workflow):
     """The two hand-copied pipelines in this org differ by exactly four lines,
     all of them the service name. Deriving it means a service author copies
     this file unchanged and that entire class of error disappears."""
-    step = _step_running(workflow, "zip -qr")
+    step = _step_running(workflow, "scripts/package.sh")
     assert step["env"]["SERVICE"] == "${{ github.event.repository.name }}"
-    assert "${SERVICE}-${platform}.zip" in _run(step)
+    assert "${SERVICE}-${platform}.zip" in PACKAGER.read_text()
+
+
+def test_the_workflow_packages_through_the_shared_script(workflow):
+    """Not inline shell. What packaging repairs is damage done between the
+    build job and this one, so it can only be tested by simulating that
+    round-trip and running the real thing -- which means CI and
+    docker-local/build-binary.sh have to execute the same file."""
+    step = _step_running(workflow, "scripts/package.sh")
+    assert PACKAGER.is_file(), "scripts/package.sh is missing"
+    assert "zip" not in _run(step), "packaging logic has leaked back into the YAML"
 
 
 def test_the_build_action_is_pinned_to_a_commit(workflow):
@@ -192,3 +206,58 @@ def test_the_release_output_paths_are_gitignored():
         assert path in ignored, f"{path} is not gitignored"
         assert path.rstrip("/") in workflow_text, \
             f"{path} is ignored but the workflow no longer writes there"
+
+
+def test_the_upload_keeps_hidden_files(workflow):
+    """`logs/` is kept by a `.gitkeep`, and actions/upload-artifact@v4 excludes
+    dotfiles unless told otherwise. Without this the file is dropped, the
+    directory is then empty, and an empty directory is not stored either -- so
+    `logs/` silently never reaches the customer, while every step still passes.
+
+    That is not hypothetical: release prod-1 shipped without it."""
+    uploads = [s for s in _all_steps(workflow)
+               if "upload-artifact" in str(s.get("uses", ""))]
+    assert uploads, "no upload step found"
+    for step in uploads:
+        assert step["with"].get("include-hidden-files") is True, \
+            "the upload drops dotfiles, so logs/ will not reach the customer"
+
+
+def test_the_binary_is_made_executable_before_zipping():
+    """actions/upload-artifact cannot preserve the executable bit, so the binary
+    arrives at packaging as 0644 and zips as 0644. The customer unzips something
+    they cannot run, and no privilege fixes it -- Linux requires at least one x
+    bit even for root.
+
+    prod-1 shipped a `-rw-r--r--` binary. Every job was green."""
+    source = PACKAGER.read_text()
+    assert "chmod +x" in source, "nothing restores the executable bit"
+    # Chained to the declared entry script, not a hardcoded name, so renaming
+    # the script cannot leave this chmod-ing a file that no longer exists.
+    assert 'basename "$SCRIPT_PATH"' in source
+
+
+def test_packaging_creates_the_logs_directory():
+    """An empty directory does not survive an artifact upload, so the build
+    cannot hand one over. Packaging makes it, which is also the only place that
+    can be tested without a round-trip through GitHub."""
+    assert 'mkdir -p "$dir/logs"' in PACKAGER.read_text()
+
+
+def test_the_entry_script_is_declared_once(workflow):
+    """The build passes it to PyInstaller and packaging derives the binary name
+    from it. Two copies would disagree silently the day a service renames it."""
+    assert workflow["env"]["SCRIPT"] == "app/main.py"
+    builds = [s for s in _all_steps(workflow)
+              if "python-binary-action" in str(s.get("uses", ""))]
+    for step in builds:
+        assert step["with"]["scripts"] == "${{ env.SCRIPT }}"
+
+
+def test_the_packaging_script_is_executable():
+    """The workflow invokes it as `./scripts/package.sh`, so a copy committed
+    without its executable bit fails the release with "Permission denied" --
+    after the build has already run on three platforms. Git records the mode,
+    and a file recreated by an editor or a careless `cp` loses it silently."""
+    assert os.access(PACKAGER, os.X_OK), \
+        "scripts/package.sh is not executable; the release step cannot run it"

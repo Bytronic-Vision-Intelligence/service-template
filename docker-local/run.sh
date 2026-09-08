@@ -10,6 +10,8 @@
 #   ./run.sh --release-workflow drive the release workflow through act (limited,
 #                               see readme.md - the vendor action does not run
 #                               under act)
+#   ./run.sh --verify-release [tag]
+#                               check a PUBLISHED release as a customer gets it
 #   ./run.sh -j build           run one job
 #   ./run.sh pull_request       run a different event
 #   ./run.sh --fresh            wipe the toolcache first, resolve deps from scratch
@@ -51,6 +53,12 @@ fi
 # and dies on its first import.
 # run.sh has already cd'd to this directory.
 run_binary_build() { ./build-binary.sh; }
+
+# Not a mode: it inspects a published release rather than running a workflow.
+if [ "${1:-}" = "--verify-release" ]; then
+  shift
+  exec ./verify-release.sh "$@"
+fi
 
 MODES=(checks)
 case "${1:-}" in

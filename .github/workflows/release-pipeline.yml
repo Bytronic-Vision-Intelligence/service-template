@@ -27,6 +27,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # The service's entry script, named once. The build passes it to PyInstaller;
+  # packaging derives the binary's name from it to restore the executable bit.
+  # Two copies of this would silently disagree the day a service renames it.
+  SCRIPT: app/main.py
+
 defaults:
   run:
     shell: bash
@@ -75,7 +81,7 @@ jobs:
       - name: Build application
         uses: espressif/python-binary-action@b7d9c899ef131570d6be8b7ba7c8d21f9b268c82
         with:
-          scripts: "app/main.py"
+          scripts: ${{ env.SCRIPT }}
           output-dir: "./dist/${{ matrix.platform }}"
           target-platform: ${{ matrix.platform }}
           # requirements.txt is runtime-only, so the binary does not carry a
@@ -99,28 +105,34 @@ jobs:
               ]
             }
 
-      - name: Add editable config and logs folder
+      - name: Add the editable config
         run: |
           set -euo pipefail
           output_dir="./dist/${{ matrix.platform }}"
           # Beside the executable, so an operator can edit it after extracting.
+          # logs/ is NOT created here: an empty directory does not survive an
+          # artifact upload, so scripts/package.sh makes it at packaging time
+          # where nothing can drop it. One owner, not two.
           cp app/dependencies/config.yaml "$output_dir/config.yaml"
-          mkdir -p "$output_dir/logs"
-          touch "$output_dir/logs/.gitkeep"
 
       - name: Verify build output
         run: |
           set -euo pipefail
           output_dir="./dist/${{ matrix.platform }}"
           test -f "$output_dir/config.yaml"
-          test -d "$output_dir/logs"
           test "$(find "$output_dir" -type f | wc -l)" -gt 1
 
+      # include-hidden-files, because v4 excludes dotfiles by default and a
+      # service that ships one would lose it silently. logs/ no longer depends
+      # on this -- scripts/package.sh creates it at packaging time -- but the
+      # default is a trap worth closing rather than rediscovering. Pinned by
+      # test/test_release_pipeline.py::test_the_upload_keeps_hidden_files
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.platform }}
           path: "./dist/${{ matrix.platform }}"
+          include-hidden-files: true
           if-no-files-found: error
 
   release:
@@ -149,27 +161,17 @@ jobs:
         with:
           path: build
 
+      # The logic is in scripts/package.sh so CI and the local runner execute
+      # the SAME code. It repairs damage done between the build job and this
+      # one -- a lost executable bit, a missing logs/ -- which is exactly the
+      # kind of thing a reimplementation in a test would not catch.
       - name: Package each platform
         env:
           SERVICE: ${{ github.event.repository.name }}
+          SCRIPT: ${{ env.SCRIPT }}
         run: |
           set -euo pipefail
-          mkdir -p upload
-          shopt -s nullglob
-          found=0
-          for dir in build/build-*; do
-            platform="${dir#build/build-}"
-            ( cd "$dir" && zip -qr "../../upload/${SERVICE}-${platform}.zip" . )
-            found=$((found + 1))
-          done
-          # A silent zero here would publish a release with no binaries in it,
-          # and `gh release create` succeeds perfectly well with no files.
-          if [ "$found" -eq 0 ]; then
-            echo "::error::no platform artifacts were downloaded - nothing to release"
-            exit 1
-          fi
-          echo "Packaged ${found} platform(s):"
-          ls -lh upload
+          ./scripts/package.sh build upload "$SERVICE" "$SCRIPT"
 
       # The only step that sees the signing key. It refuses to sign unless the
       # secret's public half matches the one committed in scripts/sign.py, so a

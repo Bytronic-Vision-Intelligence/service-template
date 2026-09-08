@@ -30,7 +30,12 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 
 # The flags come out of the workflow rather than being repeated here, so this
 # tracks what CI actually passes instead of drifting away from it.
-SCRIPT_PATH=$(awk -F'"' '/^ *scripts:/ {print $2; exit}' "$WORKFLOW")
+# The entry script is declared once, as a workflow-level `env: SCRIPT:`, and
+# the build step references it as ${{ env.SCRIPT }}. Read the declaration, not
+# the reference. The second form is the fallback for a repo that still names
+# the script inline in `scripts:`.
+SCRIPT_PATH=$(sed -n 's/^ *SCRIPT: *//p' "$WORKFLOW" | head -1 | tr -d "\"'")
+[ -n "$SCRIPT_PATH" ] || SCRIPT_PATH=$(awk -F'"' '/^ *scripts:/ {print $2; exit}' "$WORKFLOW")
 EXTRA_ARGS=$(awk -F': ' '/^ *additional-args:/ {sub(/^ +/,"",$2); print $2; exit}' "$WORKFLOW")
 # Strip surrounding quotes: `additional-args: ""` must mean no arguments, not a
 # literal empty string, which PyInstaller would take as the script name.
@@ -82,9 +87,56 @@ echo "==> built $(du -h "$BINARY" | cut -f1)"
 echo "==> smoke test: --help"
 if docker run --rm -v "$TREE:/work" "python:${PYTHON_VERSION}-slim" \
      /work/dist/local/"$(basename "$SCRIPT_PATH" .py)" --help; then
-  echo "==> PASS: the binary runs and answers --help"
+  echo "==> binary ok"
 else
   echo "==> FAIL: the binary was built but does not run. This is exactly what"
   echo "    breaks a release: the build succeeds and only running it shows."
   exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Package it the way the release job does, and check what a customer receives.
+#
+# The build job uploads an artifact and the release job downloads it, and that
+# round-trip silently drops the executable bit and any empty directory. Release
+# prod-1 shipped both defects having passed every job, so the simulation below
+# reproduces exactly that damage before calling the REAL packaging script - not
+# a copy of it, which would only ever test the copy.
+# ---------------------------------------------------------------------------
+BUILD="$TREE/.pkg/build/build-linux-amd64"
+rm -rf "$TREE/.pkg"; mkdir -p "$BUILD"
+cp "$BINARY" "$BUILD/"
+cp "$REPO_ROOT/app/dependencies/config.yaml" "$BUILD/config.yaml"
+
+# The damage an artifact round-trip does: the executable bit is not preserved,
+# and an empty directory is not stored.
+chmod 644 "$BUILD/$(basename "$SCRIPT_PATH" .py)"
+echo "==> simulated the artifact round-trip (executable bit stripped)"
+
+"$REPO_ROOT/scripts/package.sh" "$TREE/.pkg/build" "$TREE/.pkg/upload" \
+  service-template "$SCRIPT_PATH" >/dev/null
+
+ZIP="$TREE/.pkg/upload/service-template-linux-amd64.zip"
+[ -f "$ZIP" ] || { echo "==> FAIL: packaging produced no zip"; exit 1; }
+
+echo "==> checking the zip as a customer receives it"
+rm -rf "$TREE/.pkg/x"; mkdir -p "$TREE/.pkg/x"
+( cd "$TREE/.pkg/x" && unzip -q "$ZIP" )
+
+fail=0
+BIN_IN_ZIP="$TREE/.pkg/x/$(basename "$SCRIPT_PATH" .py)"
+if [ -x "$BIN_IN_ZIP" ]; then echo "    executable  ok"; else echo "    executable  NO - the customer cannot run this"; fail=1; fi
+if [ -f "$TREE/.pkg/x/config.yaml" ]; then echo "    config.yaml ok"; else echo "    config.yaml MISSING"; fail=1; fi
+if [ -d "$TREE/.pkg/x/logs" ]; then echo "    logs/       ok"; else echo "    logs/       MISSING"; fail=1; fi
+
+# The point of the whole exercise: does the unpacked thing actually launch?
+if docker run --rm -v "$TREE/.pkg/x:/c" "python:${PYTHON_VERSION}-slim" \
+     /c/"$(basename "$SCRIPT_PATH" .py)" --help >/dev/null 2>&1; then
+  echo "    launches    ok"
+else
+  echo "    launches    NO"
+  fail=1
+fi
+
+[ "$fail" -eq 0 ] || { echo "==> FAIL: the packaged zip is not usable as shipped"; exit 1; }
+echo "==> PASS: built, packaged, unpacked, and launched"

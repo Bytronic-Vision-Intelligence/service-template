@@ -22,6 +22,7 @@ containers are siblings of the runner, not children.
 ./run.sh             # checks: what a pull request would run
 ./run.sh --release   # build the binary and smoke-test it
 ./run.sh --all       # checks, then the binary build
+./run.sh --verify-release [tag]   # check a PUBLISHED release
 ./run.sh -j build    # one job
 ./run.sh pull_request
 ./run.sh --fresh     # wipe act's toolcache volume first
@@ -32,10 +33,21 @@ containers are siblings of the runner, not children.
 `./run.sh` runs the workflows a pull request triggers, through act.
 
 `./run.sh --release` does **not** use act. It calls `build-binary.sh`, which
-reproduces the release pipeline's PyInstaller invocation directly — reading the
-script path and `additional-args` out of the workflow so it cannot drift from
-what CI passes — and then runs the binary with `--help`, exactly as the build
-action's own smoke test does.
+takes a release all the way through:
+
+1. builds with PyInstaller, reading the entry script and `additional-args` out
+   of the workflow so it cannot drift from what CI passes
+2. runs the binary with `--help`, exactly as the build action's smoke test does
+3. **simulates the artifact round-trip** — strips the executable bit, the way
+   `actions/upload-artifact` does
+4. calls `scripts/package.sh`, the *same script CI runs*, not a copy
+5. unzips the result and checks it as a customer receives it: binary
+   executable, `config.yaml` and `logs/` present — then **launches it**
+
+Steps 3 to 5 are what release `prod-1` needed and did not have. The packaging
+logic lives in a script precisely so this can execute the real thing: what it
+repairs is damage done between two CI jobs, and a reimplementation in a test
+would only ever test the reimplementation.
 
 **Why not act for the release build.** The pipeline calls
 `espressif/python-binary-action`, which on Linux runs a nested Docker step
@@ -52,10 +64,25 @@ would cut a real release from an uncommitted working tree. That restriction is
 applied before act sees `--dryrun` or `-l`, so even a dry run cannot walk the
 publish job and print `Create GitHub release ✅ Success`.
 
-This catches the failure mode nothing else can. A binary that is missing an
-import still *builds*, at full size, with no warning — it dies the first time
-it is run. Unit tests cannot see it, and neither can anything that only reads
-the workflow file. It is what took the first `prod` release down.
+This catches the two failure modes nothing else can. A binary missing an import
+still *builds*, at full size, with no warning — it dies the first time it is
+run. And a binary that builds and runs perfectly can still be shipped in a zip
+the customer cannot execute. Unit tests see neither; nor does anything that only
+reads the workflow file. Between them they took down both of the first two
+`prod` releases.
+
+### Verifying a published release
+
+`./run.sh --verify-release` downloads a release and checks it the way a
+customer receives it: the detached signature verifies under the key committed
+in `scripts/sign.py`, the zip matches `SHA256SUMS`, the binary inside is
+**executable**, and `config.yaml` and `logs/` are present.
+
+This is the only check that sees what actually ships. The build tests a binary
+before it is uploaded, and `build-binary.sh` never goes through an artifact at
+all — so neither can see anything lost in the round-trip between the build and
+packaging jobs. Release `prod-1` passed every job and shipped a binary the
+customer could not execute, with `logs/` missing, on all three platforms.
 
 Both builds run against a clean copy of the **tracked** tree, never the live
 working directory. The act mount is read-write, so a build running `uv venv` in
