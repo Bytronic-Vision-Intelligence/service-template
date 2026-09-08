@@ -1,3 +1,4 @@
+from logging import info
 import threading
 from queue import Queue
 
@@ -20,7 +21,7 @@ def subscribe_listener(ip: str, port: int, trigger_topic: str, result_queue: Que
 
     def _on_message(topic: str, payload: str) -> None:
         """Hand a received payload to the main thread."""
-        print("Request received:", topic)
+        info("Request received: %s", topic)
         result_queue.put(payload)
 
     client.subscribe(trigger_topic, _on_message)

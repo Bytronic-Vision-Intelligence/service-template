@@ -1,106 +1,116 @@
-import sys
+# test/test_load_config.py
+"""Reading the configuration a service was told to run with.
+
+--config is required and there is no fallback. That is the behaviour under
+test: a service that found a config on its own would start whenever one
+happened to be beside it -- a stale copy, the example shipped in the package,
+or another instance's file in a shared directory -- and would be the wrong
+service while looking entirely healthy.
+"""
+import re
 
 import pytest
 
-from dependencies.loadConfig import (
-    LOCAL_CONFIG_PATH,
-    config_path,
-    get_config,
-    load_yaml,
-    return_config_value,
-)
+from dependencies import loadConfig
 
 
-def test_test_flag_selects_the_bundled_config():
-    assert config_path() == LOCAL_CONFIG_PATH
+@pytest.fixture(autouse=True)
+def _forget_the_active_config(monkeypatch):
+    """Reset the resolved path between tests.
 
-
-def test_config_flag_is_used_verbatim(monkeypatch, tmp_path):
-    # service-orchestrator launches every service with --config <abs path>
-    supplied = tmp_path / "orchestrator-written.yaml"
-    monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(supplied)])
-
-    assert config_path() == supplied
-
-
-def test_no_flag_exits(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["main.py"])
-
-    with pytest.raises(SystemExit):
-        config_path()
-
-
-def test_missing_config_file_exits_rather_than_starting_empty(monkeypatch, tmp_path):
-    monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(tmp_path / "absent.yaml")])
-
-    with pytest.raises(SystemExit):
-        get_config()
-
-
-def test_load_yaml_returns_empty_for_missing_empty_and_non_mapping(tmp_path):
-    assert load_yaml(tmp_path / "missing.yaml") == {}
-
-    empty = tmp_path / "empty.yaml"
-    empty.write_text("", encoding="utf-8")
-    assert load_yaml(empty) == {}
-
-    scalar = tmp_path / "scalar.yaml"
-    scalar.write_text("a bare string\n", encoding="utf-8")
-    assert load_yaml(scalar) == {}
-
-
-def test_bundled_config_supplies_every_key_main_requires():
-    # main() refuses to start without these, so the shipped example must have them
-    config = get_config()
-
-    assert "broker_details" in config
-    assert "topics" in config
-    assert {"mqtt_ip", "mqtt_port"} <= set(config["broker_details"])
-
-
-def test_return_config_value():
-    config = get_config()
-    assert return_config_value("broker_details") == config["broker_details"]
-
-    with pytest.raises(KeyError):
-        return_config_value("non_existent_key")
-
-    with pytest.raises(ValueError):
-        return_config_value("")
-
-
-def test_help_exits_zero_and_describes_the_flags(monkeypatch, capsys):
-    """A frozen binary must answer --help successfully.
-
-    The release pipeline's build action smoke-tests every binary it produces by
-    running it with `--help`, and treats a non-zero exit as a broken build --
-    there is no input to change that argument. `add_help=False` meant --help
-    fell through to "Missing required --config path" and exit 1, so a
-    perfectly good binary failed the build.
-
-    It is also what a customer types first.
+    It is deliberately process state -- a service reads one config for its
+    lifetime -- so without this a test inherits the previous one's file.
     """
-    monkeypatch.setattr(sys, "argv", ["main.py", "--help"])
+    monkeypatch.setattr(loadConfig, "_ACTIVE", None)
+
+
+@pytest.fixture
+def config_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("mqtt:\n  mqtt_ip: 10.0.0.1\n")
+    return path
+
+
+def test_the_named_config_is_read(config_file):
+    assert loadConfig.get_config(config_file)["mqtt"]["mqtt_ip"] == "10.0.0.1"
+
+
+def test_a_second_instance_reads_its_own_file(tmp_path, config_file):
+    """The reason the flag exists: one binary, several instances."""
+    other = tmp_path / "instance-2.yaml"
+    other.write_text("mqtt:\n  mqtt_ip: 10.0.0.2\n")
+    assert loadConfig.get_config(other)["mqtt"]["mqtt_ip"] == "10.0.0.2"
+
+
+@pytest.mark.parametrize("nothing", ["", "   ", "\t", "\n", None])
+def test_naming_no_config_is_refused(nothing):
+    """An empty value reaches a service from an unset shell variable or a
+    launcher that dropped an argument."""
+    with pytest.raises(SystemExit, match="--config is required"):
+        loadConfig.resolve_config_path(nothing)
+
+
+def test_nothing_is_read_from_beside_the_binary(tmp_path, monkeypatch):
+    """The whole point. Even with a perfectly good config sitting next to the
+    service, an unnamed one must not be found: that file could be a stale
+    deployment, the packaged example, or another instance's."""
+    beside = tmp_path / "config.yaml"
+    beside.write_text("mqtt:\n  mqtt_ip: 10.9.9.9\n")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="--config is required"):
+        loadConfig.get_config("")
+
+
+def test_a_named_file_that_is_absent_is_refused(tmp_path):
+    missing = tmp_path / "not-here.yaml"
+    with pytest.raises(SystemExit, match=re.escape(str(missing))):
+        loadConfig.get_config(missing)
+
+
+@pytest.mark.parametrize("text", ["", "\n", "- a\n- b\n", "just a string\n"])
+def test_an_empty_or_non_mapping_config_reads_as_empty(tmp_path, text):
+    """A list or a bare string is not a config section. Returning it would push
+    an AttributeError into whatever asked for a key."""
+    path = tmp_path / "c.yaml"
+    path.write_text(text)
+    assert loadConfig.get_config(path) == {}
+
+
+def test_later_reads_use_the_file_the_service_started_with(tmp_path):
+    """A service told to use instance-2.yaml must never drift onto another
+    file, and its errors must name the one it actually opened."""
+    other = tmp_path / "instance-2.yaml"
+    other.write_text("mqtt: {}\n")
+    loadConfig.get_config(other)
+    assert loadConfig.config_path() == other
+    with pytest.raises(KeyError, match="instance-2.yaml"):
+        loadConfig.return_config_value("absent")
+
+
+def test_asking_for_the_path_before_parsing_is_an_error():
+    """Reaching for config before arguments are parsed is a wiring mistake,
+    and answering with a guess would hide it."""
+    with pytest.raises(SystemExit, match="no configuration"):
+        loadConfig.config_path()
+
+
+def test_the_config_flag_is_required():
+    """A bare run exits non-zero rather than guessing which instance it is."""
     with pytest.raises(SystemExit) as exit_info:
-        config_path()
-    assert exit_info.value.code == 0
-    printed = capsys.readouterr().out
-    assert "--config" in printed
-    assert "--test" in printed
-
-
-def test_help_is_offered_by_its_short_flag_too(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["main.py", "-h"])
-    with pytest.raises(SystemExit) as exit_info:
-        config_path()
-    assert exit_info.value.code == 0
-
-
-def test_no_flag_still_exits_non_zero(monkeypatch):
-    """Adding --help must not turn "you forgot --config" into a success. A
-    service that starts with no configuration and exits 0 looks healthy to
-    anything supervising it."""
-    monkeypatch.setattr(sys, "argv", ["main.py"])
-    with pytest.raises(SystemExit) as exit_info:
-        config_path()
+        loadConfig.parse_cli([])
     assert exit_info.value.code != 0
+
+
+def test_help_still_exits_zero(capsys):
+    """The release build smoke-tests every binary with --help and fails on a
+    non-zero exit. argparse handles --help before it enforces required
+    arguments, so a required --config does not break the build."""
+    with pytest.raises(SystemExit) as exit_info:
+        loadConfig.parse_cli(["--help"])
+    assert exit_info.value.code == 0
+    assert "--config" in capsys.readouterr().out
+
+
+def test_the_flag_carries_the_path():
+    assert loadConfig.parse_cli(["--config", "/some/where.yaml"]).config == \
+        "/some/where.yaml"

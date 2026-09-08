@@ -75,12 +75,16 @@ def test_the_config_is_not_made_executable(built):
     assert not mode["config.yaml"] & stat.S_IXUSR
 
 
-def test_logs_is_created_by_packaging(built):
-    """The build cannot hand one over -- an empty directory does not survive an
-    artifact upload -- so packaging owns it."""
+def test_no_logs_directory_is_shipped(built):
+    """Services do not write log files. They print; the orchestrator tees every
+    child's output to project/logging/<service>; logging-service is the only
+    thing that writes to disk, under its own configured directory.
+
+    A logs/ folder in every service package would be an empty directory nothing
+    ever opens -- and prod-4 shipped exactly that, on every platform."""
     assert _package(built).returncode == 0
     with zipfile.ZipFile(built / "upload" / "a-service-linux-amd64.zip") as z:
-        assert any(n.startswith("logs/") for n in z.namelist()), z.namelist()
+        assert not [n for n in z.namelist() if n.startswith("logs")], z.namelist()
 
 
 def test_a_windows_binary_is_found_by_its_exe_name(built):

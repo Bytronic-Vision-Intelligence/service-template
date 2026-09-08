@@ -66,9 +66,9 @@ def test_nothing_but_a_push_to_prod_triggers_a_release(workflow):
 
 
 def test_only_one_job_can_see_the_signing_key(workflow):
-    """The build matrix runs on three runners including Windows and macOS. The
-    key is needed on exactly one of them, so every runner that does not need it
-    must not receive it -- three times the exposure buys nothing."""
+    """The build matrix runs on more than one runner. The key is needed on
+    exactly one of them, so every runner that does not need it must not receive
+    it -- extra exposure buys nothing."""
     signing = [name for name, job in _jobs(workflow).items()
                if "SERVICE_SIGNING_KEY" in str(job)]
     assert signing == ["release"]
@@ -237,11 +237,11 @@ def test_the_binary_is_made_executable_before_zipping():
     assert 'basename "$SCRIPT_PATH"' in source
 
 
-def test_packaging_creates_the_logs_directory():
-    """An empty directory does not survive an artifact upload, so the build
-    cannot hand one over. Packaging makes it, which is also the only place that
-    can be tested without a round-trip through GitHub."""
-    assert 'mkdir -p "$dir/logs"' in PACKAGER.read_text()
+def test_packaging_ships_no_logs_directory():
+    """Logging goes over MQTT: services print, the orchestrator tees to
+    project/logging/<service>, and logging-service writes the files. A logs/
+    folder here would ship empty to every customer, which prod-4 did."""
+    assert 'mkdir -p "$dir/logs"' not in PACKAGER.read_text()
 
 
 def test_the_entry_script_is_declared_once(workflow):
@@ -261,3 +261,17 @@ def test_the_packaging_script_is_executable():
     and a file recreated by an editor or a careless `cp` loses it silently."""
     assert os.access(PACKAGER, os.X_OK), \
         "scripts/package.sh is not executable; the release step cannot run it"
+
+
+def test_macos_is_not_built_without_a_signing_certificate(workflow):
+    """No customer runs macOS, and an unsigned macOS binary is refused by
+    Gatekeeper on first launch -- "cannot be opened because the developer
+    cannot be verified" -- which only an Apple Developer certificate solves.
+
+    Adding the leg back without that certificate ships three platforms and
+    delivers two. If you are here because this test failed, the certificate is
+    the prerequisite, not this assertion."""
+    platforms = [leg["platform"]
+                 for leg in workflow["jobs"]["build"]["strategy"]["matrix"]["include"]]
+    assert not [p for p in platforms if p.startswith("macos")], \
+        f"macOS is being built: {platforms}"

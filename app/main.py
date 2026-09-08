@@ -1,12 +1,12 @@
 import time
 from json import JSONDecodeError, loads
-from logging import info
+from logging import info, warning
 from queue import Empty, Queue
 from threading import Event
 
 from mqtt_client import MQTTClient, MQTTConfig
 
-from dependencies import loadConfig
+from dependencies import loadConfig, logging_setup
 from dependencies.mqtt_functions import start_subscribe_thread
 
 
@@ -21,19 +21,30 @@ def require(config: dict, key: str):
     Raises:
         SystemExit: when `key` is absent, naming both the key and the file.
     """
-    if key not in config:
-        raise SystemExit(f"Missing required config key '{key}' in {loadConfig.config_path()}")
+    # `is None` as well as absent: a key present but empty is a section
+    # somebody meant to fill in, and letting it through moves the failure to
+    # whatever first subscripts it.
+    if key not in config or config[key] is None:
+        # Named only if one has been loaded. require() is also called on
+        # nested sections in contexts that never parsed arguments, and
+        # config_path() refuses to guess there -- which would replace this
+        # message with one about the wrong problem entirely.
+        try:
+            where = f" in {loadConfig.config_path()}"
+        except SystemExit:
+            where = ""
+        raise SystemExit(f"Missing required config key '{key}'{where}")
     return config[key]
 
 
-def start_subscribers(broker: dict, topics: list, stop_event: Event) -> list:
+def start_subscribers(mqtt_config: dict, topics: list, stop_event: Event) -> list:
     """Start one listener thread per subscribed topic.
 
     Each topic entry with `is_subscribe` true gains a `queue` key, which
     `next_trigger` later reads from.
 
     Args:
-        broker: mapping containing mqtt_ip and mqtt_port.
+        mqtt_config: the `mqtt` section, carrying mqtt_ip and mqtt_port.
         topics: configured topic entries; mutated in place to carry queues.
         stop_event: shared shutdown signal handed to every listener.
     Returns:
@@ -46,8 +57,8 @@ def start_subscribers(broker: dict, topics: list, stop_event: Event) -> list:
         topic["queue"] = Queue()
         threads.append(
             start_subscribe_thread(
-                broker["mqtt_ip"],
-                broker["mqtt_port"],
+                mqtt_config["mqtt_ip"],
+                mqtt_config["mqtt_port"],
                 topic["topic"],
                 topic["queue"],
                 stop_event,
@@ -75,8 +86,7 @@ def next_trigger(topics: list):
         try:
             return loads(payload)
         except (JSONDecodeError, TypeError) as exc:
-            info(f"Discarding malformed payload on {topic['topic']}: {exc}")
-            print(f"Discarding malformed payload on {topic['topic']}: {exc}")
+            warning(f"Discarding malformed payload on {topic['topic']}: {exc}")
     return None
 
 
@@ -91,7 +101,7 @@ def output_topics(topics: list) -> list:
     return [topic["topic"] for topic in topics if not topic.get("is_subscribe")]
 
 
-def worker_process_function(client: MQTTClient, message: dict, outputs: list) -> None:
+def service_process_function(client: MQTTClient, message: dict, outputs: list) -> None:
     """Replace this with your service's work.
 
     Args:
@@ -99,20 +109,31 @@ def worker_process_function(client: MQTTClient, message: dict, outputs: list) ->
         message: the decoded trigger payload.
         outputs: topic strings this service publishes to.
     """
-    print("insert your program here")
+
+    # insert your service's work here
+
+    return None
 
 
-def main():
-    config = loadConfig.get_config()
-    broker = require(config, "broker_details")
-    topics = require(config, "topics")
+def main(argv=None):
+    args = loadConfig.parse_cli(argv)
 
-    client = MQTTClient(MQTTConfig(host=broker["mqtt_ip"], port=broker["mqtt_port"]))
+    config = loadConfig.get_config(args.config)
+
+    log_settings = config.get("logging") or {}
+    logging_setup.configure(log_settings.get("level", logging_setup.DEFAULT_LEVEL))
+
+    mqtt_config = require(config, "mqtt")
+    topics = require(mqtt_config, "topics")
+    require(config, "service")
+
+    client = MQTTClient(
+        MQTTConfig(host=mqtt_config["mqtt_ip"], port=mqtt_config["mqtt_port"]))
     client.connect()
 
     outputs = output_topics(topics)
     stop_event = Event()
-    threads = start_subscribers(broker, topics, stop_event)
+    threads = start_subscribers(mqtt_config, topics, stop_event)
 
     try:
         while True:
@@ -122,10 +143,10 @@ def main():
             if message is None:
                 continue
 
-            worker_process_function(client, message, outputs)
+            service_process_function(client, message, outputs)
 
     except KeyboardInterrupt:
-        print("Shutting down subscribe listener and exiting.")
+        info("Shutting down subscribe listener and exiting.")
     finally:
         stop_event.set()
         for thread in threads:

@@ -43,9 +43,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
 
-    # No secret is available to this job, by design. It runs on three runners
-    # including Windows and macOS; the signing key is needed on exactly one, so
-    # it is used in `release` instead and never reaches the others.
+    # No secret is available to this job, by design. The signing key is needed
+    # on exactly one runner, so it is used in `release` instead and never
+    # reaches the build legs.
+    #
+    # macOS is deliberately not built: no customer runs one. It also removes
+    # the Gatekeeper problem, which an unsigned macOS binary hits on first
+    # launch -- "cannot be opened because the developer cannot be verified" --
+    # and which only an Apple Developer certificate solves. Add the leg back
+    # alongside that certificate, not before it.
     strategy:
       fail-fast: false
       matrix:
@@ -54,8 +60,6 @@ jobs:
             runner: ubuntu-latest
           - platform: windows-amd64
             runner: windows-latest
-          - platform: macos-arm64
-            runner: macos-latest
 
     steps:
       - name: Check out repository
@@ -72,7 +76,7 @@ jobs:
           test -f app/main.py
           test -f requirements.txt
           test -d app/dependencies
-          test -f app/dependencies/config.yaml
+          test -f config.yaml
           echo "Layout looks like a Bytronic service."
 
       # Pinned to a commit rather than @master: this action turns source into
@@ -109,11 +113,10 @@ jobs:
         run: |
           set -euo pipefail
           output_dir="./dist/${{ matrix.platform }}"
-          # Beside the executable, so an operator can edit it after extracting.
-          # logs/ is NOT created here: an empty directory does not survive an
-          # artifact upload, so scripts/package.sh makes it at packaging time
-          # where nothing can drop it. One owner, not two.
-          cp app/dependencies/config.yaml "$output_dir/config.yaml"
+          # Beside the executable, which is exactly where the service reads
+          # it from. The orchestrator overwrites it on deployment; this copy is
+          # the documented starting point.
+          cp config.yaml "$output_dir/config.yaml"
 
       - name: Verify build output
         run: |

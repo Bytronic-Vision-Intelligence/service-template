@@ -1,7 +1,7 @@
 # Application
 
-`main.py` is the entrypoint. It loads the config selected by `--config` or
-`--test`, connects to the broker, starts one subscriber thread per subscribed
+`main.py` is the entrypoint. It runs the config named by `--config`, which is
+required, connects to the broker, starts one subscriber thread per subscribed
 topic, and calls `worker_process_function` for every trigger message.
 
 ## What to edit
@@ -30,20 +30,27 @@ imported by tests without a config file present.
 
 `dependencies/loadConfig.py`:
 
-- `config_path()` — resolves `--config <path>`, else `--test`, else exits
+- `resolve_config_path(supplied)` — the path from `--config`. Empty or missing
+  is refused, never defaulted
+- `config_path()` — the file in use, for error messages
 - `load_yaml(path)` — parses a YAML mapping; `{}` if missing, empty, or not a mapping
-- `get_config()` — the resolved config; exits if the selected file is absent
-- `return_config_value(key)` — one value; re-reads the file on each call
+- `get_config(supplied)` — the config; exits if none was named or the file is absent
+- `return_config_value(key)` — one value, from the file the service started with
+- `parse_cli(argv)` — `--config PATH` (required) and `--help`
 
-A missing `--config` file is a hard error rather than an empty dict, because
-service-orchestrator passes a path it has just written — if it is not there,
+There is no fallback, and that is the point. A service that found a config
+beside itself would start whenever one happened to be there — a stale copy from
+a previous deployment, the packaged example, or another instance's file in a
+shared directory — and would be the wrong service while looking healthy.
+
+A missing config is likewise a hard error rather than an empty dict: the
+orchestrator writes that file when it launches a service, so its absence means
 the deployment is broken.
 
 ## Running
 
 ```bash
-python app/main.py --config /path/to/config.yaml   # deployment
-python app/main.py --test                          # bundled example config
+python main.py --config ../config.yaml
 ```
 
 See the repository [README](../Readme.md) for the orchestrator layout.

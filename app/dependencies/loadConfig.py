@@ -1,105 +1,114 @@
+"""Read the configuration a service was told to run with.
+
+``--config PATH`` is required. There is no default and no fallback: a service
+runs only when something has said which configuration it is. That something is
+service-orchestrator, which writes each instance's file and launches the binary
+pointed at it, so one binary can serve several instances.
+
+The absence of a fallback is the point. A service that quietly found a config
+beside itself would start whenever one happened to be there -- a stale copy
+from a previous deployment, the example shipped in the package, or the file
+belonging to a different instance sharing the directory. It would come up,
+subscribe, log success, and be the wrong service. Nothing would say so.
+
+So the failures here are all the same failure, reported early: no --config, an
+empty --config, or a path that is not a file.
+"""
+
 import argparse
 import sys
-import yaml
 from pathlib import Path
 
+import yaml
 
-# Fallback used by --test only. service-orchestrator passes an absolute
-# --config path in deployment, so this file is a standalone-development aid.
-LOCAL_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+#: The file in use this process, once resolved. Error messages read it, so a
+#: service told to use one config never reports about another.
+_ACTIVE: Path | None = None
+
+
+def resolve_config_path(supplied) -> Path:
+    """The config file to read.
+
+    Args:
+        supplied: the path given on the command line.
+    Raises:
+        SystemExit: when it is missing, empty or blank. An empty value reaches
+            a service from an unset shell variable or a launcher that dropped
+            an argument, and is a caller that meant to pass something.
+    """
+    global _ACTIVE
+    text = str(supplied or "").strip()
+    if not text:
+        raise SystemExit(
+            "--config is required and must name a file. A service does not "
+            "look for a config on its own: it runs the one it was told to, so "
+            "it cannot start the wrong instance by finding a stale or "
+            "example file beside it.")
+    _ACTIVE = Path(text)
+    return _ACTIVE
 
 
 def config_path() -> Path:
-    """Resolve which config file to read.
+    """The config in use, for error messages.
 
-    service-orchestrator launches every service as
-    ``app/main.py --config <path>``, so ``--config`` is the deployment path.
-    ``--test`` selects the bundled example config for standalone runs.
-
-    Returns:
-        path: the config file to load.
     Raises:
-        SystemExit: when neither flag is supplied.
+        SystemExit: when nothing has been resolved yet, which means a caller
+            reached for config before parsing arguments.
     """
-    parser = argparse.ArgumentParser(
-        prog=Path(sys.argv[0]).name,
-        description="A Bytronic service. Started by service-orchestrator, "
-                    "which supplies --config.",
-        add_help=False)
-    # -h/--help is declared explicitly rather than left to argparse's default,
-    # because the rest of this parser deliberately ignores unknown arguments
-    # (parse_known_args) so a service can take flags of its own. With
-    # add_help=True those two settings interact badly; with add_help=False and
-    # no declaration at all, --help fell through to the SystemExit below and
-    # exited 1.
-    #
-    # Exiting non-zero on --help is not cosmetic: the release pipeline's build
-    # action smoke-tests every binary by running it with --help, and treats a
-    # non-zero exit as a broken build. There is no input to change that
-    # argument, so a service that cannot answer --help cannot be released.
-    parser.add_argument("-h", "--help", action="help",
-                        help="show this message and exit")
-    parser.add_argument("--config", default=None, metavar="PATH",
-                        help="configuration file to run with")
-    parser.add_argument("--test", action="store_true",
-                        help="use the bundled example config, for standalone runs")
-    args, _ = parser.parse_known_args()
-    if args.config:
-        return Path(args.config)
-    if args.test:
-        return LOCAL_CONFIG_PATH
-    raise SystemExit("Missing required --config path (or pass --test to use local config).")
+    if _ACTIVE is None:
+        raise SystemExit("no configuration has been loaded yet")
+    return _ACTIVE
 
 
 def load_yaml(path: Path) -> dict:
-    """Read a YAML mapping from `path`.
-
-    Args:
-        path: file to read.
-    Returns:
-        data: the parsed mapping, or an empty dict if the file is missing,
-            empty, or does not contain a mapping at the top level.
-    """
+    """Read a YAML mapping, or an empty dict when there is nothing usable."""
     if not path.is_file():
         return {}
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
     return data if isinstance(data, dict) else {}
 
 
-def get_config() -> dict:
-    """Load the configuration selected by --config or --test.
+def get_config(supplied=None) -> dict:
+    """The configuration this service was told to run with.
 
-    Returns:
-        config: the parsed configuration mapping.
+    Args:
+        supplied: the path from --config. Omitted, the file already resolved
+            for this process is re-read, so later reads never drift onto a
+            different file.
     Raises:
-        SystemExit: when the selected file does not exist. A missing file means
-            the orchestrator handed over a path it did not write, so failing
-            here is preferable to starting on an empty config.
+        SystemExit: when no config has been named, or the named file is
+            absent. Starting unconfigured is worse than not starting: the
+            service comes up subscribed to nothing, publishing nowhere, and
+            looks healthy to anything watching it.
     """
-    path = config_path()
+    path = config_path() if supplied is None and _ACTIVE else resolve_config_path(supplied)
     if not path.is_file():
-        raise SystemExit(f"Config file not found: {path}")
+        raise SystemExit(f"No such config file: {path}")
     return load_yaml(path)
 
 
 def return_config_value(key: str):
-    """Return the value for `key` from the loaded config.
-
-    Re-reads the config file on every call. Prefer a single `get_config()` in
-    your entrypoint when reading more than one key.
-
-    Args:
-        key: a top-level key from the yaml file.
-    Returns:
-        the value stored under `key`.
-    Raises:
-        ValueError: when `key` is empty.
-        KeyError: when `key` is not present in the configuration.
-    """
-    if not key:
-        raise ValueError("Key cannot be empty.")
+    """One top-level value, or a KeyError naming the file it is missing from."""
     config = get_config()
     if key not in config:
-        raise KeyError(f"Key '{key}' not found in configuration.")
+        raise KeyError(f"Key '{key}' not found in {config_path()}")
     return config[key]
+
+
+def parse_cli(argv=None) -> argparse.Namespace:
+    """Parse the arguments a service accepts.
+
+    --config is required, so a bare run exits 2 rather than guessing. --help
+    still exits 0, which the release build depends on: it smoke-tests every
+    binary by running it with --help and fails on a non-zero exit.
+    """
+    parser = argparse.ArgumentParser(
+        prog=Path(sys.argv[0]).name,
+        description="A Bytronic service. Runs the configuration it is given; "
+                    "service-orchestrator supplies it.")
+    parser.add_argument(
+        "--config", required=True, metavar="PATH",
+        help="configuration to run with. Required: a service never looks for "
+             "one on its own, so it cannot start the wrong instance.")
+    return parser.parse_args(argv)

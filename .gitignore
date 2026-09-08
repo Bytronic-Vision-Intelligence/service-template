@@ -7,7 +7,6 @@ __pycache__/
 .venv/
 venv/
 
-/config.yaml
 /config-*.yaml
 junit/
 .pytest_cache/

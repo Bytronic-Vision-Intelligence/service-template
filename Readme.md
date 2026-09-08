@@ -22,10 +22,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run standalone against the bundled example config:
+Run it, with a `config.yaml` in the repository root:
 
 ```bash
-python app/main.py --test
+python app/main.py     # reads ./config.yaml
 ```
 
 Run the tests:
@@ -36,13 +36,36 @@ python -m pytest test
 
 ## Configuration
 
-The service takes its config from a file and will not start without one:
+**`--config PATH` is required. A service never looks for a config on its own.**
 
-| Invocation | Config used |
+```bash
+python app/main.py --config ./config.yaml
+```
+
+service-orchestrator writes each instance's file and launches the binary
+pointed at it, so **one binary can serve several instances**.
+
+There is deliberately no fallback. A service that found a config beside itself
+would start whenever one happened to be there — a stale copy from a previous
+deployment, the example shipped in the package, or another instance's file in a
+shared directory. It would come up, subscribe, log success, and be the wrong
+service, with nothing anywhere saying so.
+
+| | |
 |---|---|
-| `python app/main.py --config <path>` | the supplied file — how deployment works |
-| `python app/main.py --test` | `app/dependencies/config.yaml`, the bundled example |
-| `python app/main.py` | none; exits with an error |
+| `--config PATH` | runs that file; later reads in the process use it too |
+| `--config ""` | refused — an unset variable or a dropped argument |
+| no `--config` | exits 2, naming the missing flag |
+| a path that is not a file | refused, naming the path |
+| `--help` | exits 0, which the release build depends on |
+
+Starting unconfigured would be worse than not starting: the service would come
+up subscribed to nothing, publishing nowhere, and look healthy to anything
+watching it.
+
+The tracked `config.yaml` at the repository root is **not** deployment config.
+It documents the shape a section may take, and the release package ships a copy
+beside the binary as a starting point which the orchestrator then overwrites.
 
 `app/dependencies/loadConfig.py` exposes `get_config()` and
 `return_config_value(key)`. Prefer a single `get_config()` call — the accessor
@@ -69,7 +92,7 @@ service-orchestrator/
 
 To take part, a service must:
 
-1. Accept `--config <path>` on `app/main.py`
+1. Read `config.yaml` from its own directory (`loadConfig.get_config()`)
 2. Keep its entrypoint at `app/main.py`
 3. Carry its own virtualenv at `.venv/`
 4. Use a directory name matching its config section, minus any `-2`/`-3`
@@ -146,4 +169,4 @@ still fail on GitHub.
 - `test/` — pytest suite
 - `tools/` — helper scripts
 
-License: see `docs/LISENCE`.
+License: see `docs/LICENSE`.

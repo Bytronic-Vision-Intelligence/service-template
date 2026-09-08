@@ -15,7 +15,7 @@
 #   * the detached signature verifies under the key committed in scripts/sign.py
 #   * the zip's SHA256 matches SHA256SUMS
 #   * the binary inside is EXECUTABLE
-#   * config.yaml and logs/ are present
+#   * config.yaml is present, and no empty logs/ is shipped
 #
 # gh runs on the host, for its credentials; the signature check runs in a
 # container, so nothing needs installing here.
@@ -89,8 +89,13 @@ for zpath in sorted(work.glob("*.zip")):
     with zipfile.ZipFile(zpath) as z:
         names = z.namelist()
         # A zip stores the unix mode in the top 16 bits of external_attr.
+        #
+        # Directories are excluded, and that is the whole point: a directory
+        # always carries the x bit, so counting them made this check pass on any
+        # zip containing `logs/` -- including one whose binary was 0644, which
+        # is exactly the defect this exists to catch.
         execs = [i.filename for i in z.infolist()
-                 if (i.external_attr >> 16) & stat.S_IXUSR]
+                 if not i.is_dir() and (i.external_attr >> 16) & stat.S_IXUSR]
         if execs:
             print(f"  executable  ok ({', '.join(execs)})")
         else:
@@ -101,10 +106,12 @@ for zpath in sorted(work.glob("*.zip")):
             print(f"  {needed:<11} {'ok' if ok else 'MISSING'}")
             if not ok:
                 failures.append(f"{name}: {needed} missing")
-        has_logs = any(n.startswith("logs/") or n == "logs/" for n in names)
-        print(f"  logs/       {'ok' if has_logs else 'MISSING'}")
-        if not has_logs:
-            failures.append(f"{name}: logs/ missing")
+        # Absent by design: logging goes over MQTT. A logs/ here means a
+        # service package is shipping an empty directory nothing opens.
+        has_logs = any(n.startswith("logs") for n in names)
+        print(f"  no logs/    {'NO - empty dir shipped' if has_logs else 'ok'}")
+        if has_logs:
+            failures.append(f"{name}: ships an empty logs/ directory")
 
 print()
 if failures:
