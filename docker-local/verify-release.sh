@@ -89,8 +89,13 @@ for zpath in sorted(work.glob("*.zip")):
     with zipfile.ZipFile(zpath) as z:
         names = z.namelist()
         # A zip stores the unix mode in the top 16 bits of external_attr.
+        #
+        # Directories are excluded, and that is the whole point: a directory
+        # always carries the x bit, so counting them made this check pass on any
+        # zip containing `logs/` -- including one whose binary was 0644, which
+        # is exactly the defect this exists to catch.
         execs = [i.filename for i in z.infolist()
-                 if (i.external_attr >> 16) & stat.S_IXUSR]
+                 if not i.is_dir() and (i.external_attr >> 16) & stat.S_IXUSR]
         if execs:
             print(f"  executable  ok ({', '.join(execs)})")
         else:
