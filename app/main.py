@@ -105,20 +105,10 @@ def service_process_function(client: MQTTClient, message: dict, outputs: list) -
 
 
 def main(argv=None):
-    # First, and before anything that can fail. The release build smoke-tests
-    # every binary with --help and fails on a non-zero exit, so a service that
-    # reached get_config() first would exit 1 for want of a config file that
-    # only exists once deployed -- and no release could ever be published.
     args = loadConfig.parse_cli(argv)
 
-    # The supplied path, or None for config.yaml beside the binary. An empty
-    # --config is refused rather than falling back: one binary serves several
-    # instances, and a silent default would run the wrong one.
     config = loadConfig.get_config(args.config)
 
-    # Before anything else that might log. Until this runs the root logger sits
-    # at WARNING and every info() call is dropped, so a service that failed
-    # here would report nothing about why.
     log_settings = config.get("logging") or {}
     logging_setup.configure(log_settings.get("level", logging_setup.DEFAULT_LEVEL))
 
