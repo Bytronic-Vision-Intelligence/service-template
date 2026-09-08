@@ -187,7 +187,16 @@ cp "$TREE/.pkg/x/$(basename "$SCRIPT_PATH" .py)" "$RUN/"
 sed "s/mqtt_ip: .*/mqtt_ip: $BROKER/" "$TREE/.pkg/x/config.yaml" > "$RUN/config.yaml"
 TOPIC=$(awk '/^ *- name:/{n=1} n&&/^ *topic:/{gsub(/^ *topic: *"?|"? *$/,""); print; exit}' "$RUN/config.yaml")
 : "${TOPIC:?could not read a topic out of config.yaml}"
-echo "    topic: $TOPIC"
+
+# A subscription may be a filter -- logging-service listens on
+# project/logging/+ -- and MQTT forbids publishing to one. Substitute a literal
+# segment for each wildcard so the message still matches the subscription.
+PUBLISH_TOPIC=$(printf '%s' "$TOPIC" | sed -e 's|/#$|/probe|' -e 's|+|probe|g')
+if [ "$PUBLISH_TOPIC" = "$TOPIC" ]; then
+  echo "    topic: $TOPIC"
+else
+  echo "    topic: $TOPIC  (publishing to $PUBLISH_TOPIC)"
+fi
 
 # Wait for the broker rather than sleeping a guessed amount.
 for _ in $(seq 1 20); do
@@ -214,10 +223,34 @@ docker logs "$SERVICE" 2>&1 | grep -q "Subscribed to" \
   || { echo "    FAIL: the binary never subscribed"; docker logs "$SERVICE" 2>&1 | tail -5; exit 1; }
 echo "    subscribed  ok"
 
-docker exec "$BROKER" mosquitto_pub -h localhost -t "$TOPIC" -m '{"command":"run"}'
+# What counts as "it did the work" differs per service, so two signals are
+# accepted and either is enough.
+#
+#   * the service republishes on a topic it declares as an output -- proof it
+#     consumed the message and acted, without knowing anything about the
+#     service; or
+#   * a line in its log. E2E_MARKER overrides the default for a service that
+#     reports differently.
+#
+# The template publishes nothing (its worker is a placeholder), so it relies on
+# the marker; logging-service republishes, so it does not.
+OUT_TOPIC=$(awk '/is_subscribe: *false/{found=1} /^ *- name:/{t=""} /^ *topic:/{gsub(/^ *topic: *"?|"? *$/,""); t=$0} found&&t{print t; exit}' "$RUN/config.yaml")
+MARKER="${E2E_MARKER:-Request received}"
+
+if [ -n "$OUT_TOPIC" ]; then
+  echo "    watching output topic: $OUT_TOPIC"
+  docker exec -d "$BROKER" sh -c \
+    "mosquitto_sub -h localhost -t '$OUT_TOPIC' -C 1 > /tmp/out.txt 2>&1"
+  sleep 1
+fi
+
+docker exec "$BROKER" mosquitto_pub -h localhost -t "$PUBLISH_TOPIC" -m '{"command":"run"}'
 received=0
 for _ in $(seq 1 20); do
-  if docker logs "$SERVICE" 2>&1 | grep -q "Request received"; then received=1; break; fi
+  if docker logs "$SERVICE" 2>&1 | grep -q "$MARKER"; then received=1; break; fi
+  if [ -n "$OUT_TOPIC" ] && docker exec "$BROKER" test -s /tmp/out.txt 2>/dev/null; then
+    received=1; break
+  fi
   sleep 0.5
 done
 
