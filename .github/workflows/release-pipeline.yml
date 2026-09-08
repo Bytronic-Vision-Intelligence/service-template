@@ -83,6 +83,15 @@ jobs:
           install-deps-command: >-
             uv pip install
             -r requirements.txt
+          # app/main.py imports `dependencies`, which resolves at runtime only
+          # because Python puts a script's own directory on sys.path. PyInstaller
+          # is invoked from the repository root, so without this it analyses
+          # main.py with only the root on the search path, cannot resolve
+          # `dependencies`, and builds a binary that dies on its first import.
+          # It BUILDS cleanly -- the failure appears when the binary is run.
+          # Pinned by
+          # test/test_release_pipeline.py::test_the_build_puts_app_on_the_import_path
+          additional-args: --paths app
           include-data-dirs: |
             {
               "*": [

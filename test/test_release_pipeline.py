@@ -157,3 +157,38 @@ def test_runtime_requirements_carry_no_test_tooling():
     for package in ("pytest", "pluggy", "Pygments"):
         assert package.lower() not in runtime.lower(), \
             f"{package} is a runtime dependency and would be built into the binary"
+
+
+def test_the_build_puts_app_on_the_import_path(workflow):
+    """`app/main.py` does `from dependencies import ...`, which works when
+    Python runs the script because a script's own directory goes on sys.path.
+    PyInstaller is invoked from the repository root, so it analyses main.py
+    without `app/` on the search path, fails to resolve `dependencies`, and
+    still produces a binary -- one that dies on its first import.
+
+    Nothing else catches this. The build succeeds, the artefact is the right
+    size, and only running it reveals the problem.
+    """
+    builds = [s for s in _all_steps(workflow)
+              if "python-binary-action" in str(s.get("uses", ""))]
+    assert builds, "no build step found"
+    for step in builds:
+        assert "--paths app" in str(step["with"].get("additional-args", "")), \
+            "PyInstaller is not given app/ as an import path"
+
+
+def test_the_release_output_paths_are_gitignored():
+    """The release workflow writes binaries to `dist/` and zips to `upload/`.
+    In CI that is a throwaway runner, but anyone running the pipeline locally
+    leaves both in their working tree -- where `git add -A` commits a 12MB
+    binary, and nothing in the diff makes that obvious.
+
+    Coupled to the workflow by nothing except this test: change an output path
+    there and the ignore silently stops covering it.
+    """
+    ignored = (WORKFLOW.parent.parent.parent / ".gitignore").read_text().split()
+    workflow_text = WORKFLOW.read_text(encoding="utf-8")
+    for path in ("dist/", "upload/"):
+        assert path in ignored, f"{path} is not gitignored"
+        assert path.rstrip("/") in workflow_text, \
+            f"{path} is ignored but the workflow no longer writes there"

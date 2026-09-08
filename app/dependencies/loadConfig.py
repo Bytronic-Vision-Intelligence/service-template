@@ -1,4 +1,5 @@
 import argparse
+import sys
 import yaml
 from pathlib import Path
 
@@ -20,9 +21,28 @@ def config_path() -> Path:
     Raises:
         SystemExit: when neither flag is supplied.
     """
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--config", default=None)
-    parser.add_argument("--test", action="store_true")
+    parser = argparse.ArgumentParser(
+        prog=Path(sys.argv[0]).name,
+        description="A Bytronic service. Started by service-orchestrator, "
+                    "which supplies --config.",
+        add_help=False)
+    # -h/--help is declared explicitly rather than left to argparse's default,
+    # because the rest of this parser deliberately ignores unknown arguments
+    # (parse_known_args) so a service can take flags of its own. With
+    # add_help=True those two settings interact badly; with add_help=False and
+    # no declaration at all, --help fell through to the SystemExit below and
+    # exited 1.
+    #
+    # Exiting non-zero on --help is not cosmetic: the release pipeline's build
+    # action smoke-tests every binary by running it with --help, and treats a
+    # non-zero exit as a broken build. There is no input to change that
+    # argument, so a service that cannot answer --help cannot be released.
+    parser.add_argument("-h", "--help", action="help",
+                        help="show this message and exit")
+    parser.add_argument("--config", default=None, metavar="PATH",
+                        help="configuration file to run with")
+    parser.add_argument("--test", action="store_true",
+                        help="use the bundled example config, for standalone runs")
     args, _ = parser.parse_known_args()
     if args.config:
         return Path(args.config)

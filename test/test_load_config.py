@@ -67,3 +67,40 @@ def test_return_config_value():
 
     with pytest.raises(ValueError):
         return_config_value("")
+
+
+def test_help_exits_zero_and_describes_the_flags(monkeypatch, capsys):
+    """A frozen binary must answer --help successfully.
+
+    The release pipeline's build action smoke-tests every binary it produces by
+    running it with `--help`, and treats a non-zero exit as a broken build --
+    there is no input to change that argument. `add_help=False` meant --help
+    fell through to "Missing required --config path" and exit 1, so a
+    perfectly good binary failed the build.
+
+    It is also what a customer types first.
+    """
+    monkeypatch.setattr(sys, "argv", ["main.py", "--help"])
+    with pytest.raises(SystemExit) as exit_info:
+        config_path()
+    assert exit_info.value.code == 0
+    printed = capsys.readouterr().out
+    assert "--config" in printed
+    assert "--test" in printed
+
+
+def test_help_is_offered_by_its_short_flag_too(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["main.py", "-h"])
+    with pytest.raises(SystemExit) as exit_info:
+        config_path()
+    assert exit_info.value.code == 0
+
+
+def test_no_flag_still_exits_non_zero(monkeypatch):
+    """Adding --help must not turn "you forgot --config" into a success. A
+    service that starts with no configuration and exits 0 looks healthy to
+    anything supervising it."""
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    with pytest.raises(SystemExit) as exit_info:
+        config_path()
+    assert exit_info.value.code != 0
