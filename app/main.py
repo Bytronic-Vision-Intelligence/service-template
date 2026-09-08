@@ -3,6 +3,7 @@ from json import JSONDecodeError, loads
 from logging import info
 from queue import Empty, Queue
 from threading import Event
+import argparse
 
 from mqtt_client import MQTTClient, MQTTConfig
 
@@ -11,29 +12,29 @@ from dependencies.mqtt_functions import start_subscribe_thread
 
 
 def require(config: dict, key: str):
-    """Return a required top-level config value, or exit describing what is missing.
+    """Return a required config value, or exit describing what is missing.
 
     Args:
-        config: the loaded configuration mapping.
-        key: the top-level key the service cannot start without.
+        config: the loaded configuration mapping (or a nested mapping).
+        key: the key the service cannot start without.
     Returns:
         the value stored under `key`.
     Raises:
-        SystemExit: when `key` is absent, naming both the key and the file.
+        SystemExit: when `key` is absent or null, naming both the key and the file.
     """
-    if key not in config:
+    if key not in config or config[key] is None:
         raise SystemExit(f"Missing required config key '{key}' in {loadConfig.config_path()}")
     return config[key]
 
 
-def start_subscribers(broker: dict, topics: list, stop_event: Event) -> list:
+def start_subscribers(mqtt_config: dict, topics: list, stop_event: Event) -> list:
     """Start one listener thread per subscribed topic.
 
     Each topic entry with `is_subscribe` true gains a `queue` key, which
     `next_trigger` later reads from.
 
     Args:
-        broker: mapping containing mqtt_ip and mqtt_port.
+        mqtt: mapping containing mqtt_ip and mqtt_port.
         topics: configured topic entries; mutated in place to carry queues.
         stop_event: shared shutdown signal handed to every listener.
     Returns:
@@ -46,8 +47,8 @@ def start_subscribers(broker: dict, topics: list, stop_event: Event) -> list:
         topic["queue"] = Queue()
         threads.append(
             start_subscribe_thread(
-                broker["mqtt_ip"],
-                broker["mqtt_port"],
+                mqtt_config["mqtt_ip"],
+                mqtt_config["mqtt_port"],
                 topic["topic"],
                 topic["queue"],
                 stop_event,
@@ -91,7 +92,7 @@ def output_topics(topics: list) -> list:
     return [topic["topic"] for topic in topics if not topic.get("is_subscribe")]
 
 
-def worker_process_function(client: MQTTClient, message: dict, outputs: list) -> None:
+def service_process_function(client: MQTTClient, message: dict, outputs: list) -> None:
     """Replace this with your service's work.
 
     Args:
@@ -102,17 +103,19 @@ def worker_process_function(client: MQTTClient, message: dict, outputs: list) ->
     print("insert your program here")
 
 
-def main():
-    config = loadConfig.get_config()
-    broker = require(config, "broker_details")
-    topics = require(config, "topics")
+def main(config_path: str | None = None):
+    config = loadConfig.get_config(config_path)
+    mqtt_config = require(config, "mqtt")
+    topics = require(mqtt_config, "topics")
 
-    client = MQTTClient(MQTTConfig(host=broker["mqtt_ip"], port=broker["mqtt_port"]))
+    service_configs = require(config, "service")
+
+    client = MQTTClient(MQTTConfig(host=mqtt_config["mqtt_ip"], port=mqtt_config["mqtt_port"]))
     client.connect()
 
     outputs = output_topics(topics)
     stop_event = Event()
-    threads = start_subscribers(broker, topics, stop_event)
+    threads = start_subscribers(mqtt_config, topics, stop_event)
 
     try:
         while True:
@@ -122,7 +125,7 @@ def main():
             if message is None:
                 continue
 
-            worker_process_function(client, message, outputs)
+            service_process_function(client, message, outputs)
 
     except KeyboardInterrupt:
         print("Shutting down subscribe listener and exiting.")
@@ -134,4 +137,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Inference service")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to YAML config file",
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Use fallback config (app/configs/config.yaml)",
+    )
+    args = parser.parse_args()
+
+    if args.test and args.config:
+        parser.error("cannot use both --test and --config")
+    if not args.test and not args.config:
+        parser.error("one of --config or --test is required")
+
+    config_path = None if args.test else args.config
+    raise SystemExit(main(config_path=config_path))

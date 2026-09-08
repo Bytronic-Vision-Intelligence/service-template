@@ -1,0 +1,14 @@
+project: project
+mqtt:
+  mqtt_ip: localhost
+  mqtt_port: 1883
+  qos: 1
+
+  topics:
+    - name: topic_name
+      topic: project/source/ID/type
+      is_subscribe: true
+      is_trigger: true
+
+service: {}
+
