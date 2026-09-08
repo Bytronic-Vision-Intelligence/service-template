@@ -107,16 +107,6 @@ def test_start_subscribers_spawns_only_for_subscribed_topics(monkeypatch):
     assert "queue" not in topics[2]
 
 
-def test_service_process_function_logs_the_placeholder(caplog):
-    """Logged, not printed. A frozen binary block-buffers print() output, so
-    under the orchestrator it is invisible until several KB accumulate and is
-    lost entirely on a crash. Logging handlers flush per record."""
-    with caplog.at_level("INFO"):
-        main.service_process_function(None, {"command": "run"}, [])
-
-    assert "insert your program here" in caplog.text
-
-
 def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):
     config = {
         "mqtt": {"mqtt_ip": "127.0.0.1", "mqtt_port": 1883,

@@ -1,7 +1,7 @@
 # Application
 
-`main.py` is the entrypoint. It reads `config.yaml` from the directory the
-service runs from, connects to the broker, starts one subscriber thread per subscribed
+`main.py` is the entrypoint. It runs the config named by `--config`, which is
+required, connects to the broker, starts one subscriber thread per subscribed
 topic, and calls `worker_process_function` for every trigger message.
 
 ## What to edit
@@ -30,31 +30,27 @@ imported by tests without a config file present.
 
 `dependencies/loadConfig.py`:
 
-- `service_root()` — the directory the service runs from: beside the binary when
-  frozen, the repository root from source
-- `resolve_config_path(supplied)` — the supplied path, or `config.yaml` beside
-  the binary. An empty supplied path is refused, never defaulted
-- `config_path()` — the file actually in use, for error messages
+- `resolve_config_path(supplied)` — the path from `--config`. Empty or missing
+  is refused, never defaulted
+- `config_path()` — the file in use, for error messages
 - `load_yaml(path)` — parses a YAML mapping; `{}` if missing, empty, or not a mapping
-- `get_config()` — the config; exits, naming the directory, if it is absent
-- `return_config_value(key)` — one value; re-reads the file on each call
-- `parse_cli(argv)` — handles `--help` and `--config PATH`
+- `get_config(supplied)` — the config; exits if none was named or the file is absent
+- `return_config_value(key)` — one value, from the file the service started with
+- `parse_cli(argv)` — `--config PATH` (required) and `--help`
 
-A missing config is a hard error rather than an empty dict: the orchestrator
-writes that file when it launches a service, so its absence means the
-deployment is broken. Starting anyway would bring the service up subscribed to
-nothing and publishing nowhere, looking healthy to anything watching it.
+There is no fallback, and that is the point. A service that found a config
+beside itself would start whenever one happened to be there — a stale copy from
+a previous deployment, the packaged example, or another instance's file in a
+shared directory — and would be the wrong service while looking healthy.
 
-`service_root()` uses `sys.executable` rather than `__file__` because once
-PyInstaller has frozen the service `__file__` points inside a temporary
-extraction directory — so a config resolved from it is neither the operator's
-file nor present after the process exits.
+A missing config is likewise a hard error rather than an empty dict: the
+orchestrator writes that file when it launches a service, so its absence means
+the deployment is broken.
 
 ## Running
 
 ```bash
-cp dependencies/config.yaml ../config.yaml   # a starting point
-python main.py
+python main.py --config ../config.yaml
 ```
 
 See the repository [README](../Readme.md) for the orchestrator layout.

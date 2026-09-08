@@ -199,9 +199,12 @@ done
 # whatever this host produces. Pinning amd64 here runs an arm64 binary in an
 # amd64 container, which fails as "No such file or directory" and reads like
 # the service crashed.
+# --config is required: a service never looks for a config on its own, so it
+# cannot start the wrong instance by finding a stale or example file beside it.
+# A bare run exits 2, which would read here as "the binary is broken".
 docker run -d --rm --name "$SERVICE" --network "$NET" \
   -v "$RUN:/svc" -w /svc "python:${PYTHON_VERSION}-slim" \
-  "/svc/$(basename "$SCRIPT_PATH" .py)" >/dev/null
+  "/svc/$(basename "$SCRIPT_PATH" .py)" --config /svc/config.yaml >/dev/null
 
 for _ in $(seq 1 20); do
   docker logs "$SERVICE" 2>&1 | grep -q "Subscribed to" && break

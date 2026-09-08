@@ -13,7 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 from dependencies import logging_setup
 
@@ -27,14 +26,7 @@ COLLECTOR_STAMPED = re.compile(
 )
 
 
-@pytest.fixture(autouse=True)
-def _restore_logging():
-    root = logging.getLogger()
-    saved, level = root.handlers[:], root.level
-    yield
-    root.handlers[:] = saved
-    root.setLevel(level)
-
+# Root logger state is restored by an autouse fixture in conftest.py.
 
 def _emit(level="INFO", message="disk is filling up", call="warning"):
     """Configure logging and capture one line from a real subprocess.

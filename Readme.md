@@ -36,24 +36,28 @@ python -m pytest test
 
 ## Configuration
 
-**A service reads `config.yaml` from the directory it runs from.**
-service-orchestrator writes that file from its own config, which is the single
-source of truth.
+**`--config PATH` is required. A service never looks for a config on its own.**
 
-`--config PATH` overrides it, so **one binary can serve several instances**,
-each pointed at its own file. An **empty** `--config` is refused rather than
-falling back: that reaches a service from an unset shell variable or a launcher
-that dropped an argument, and quietly using the default would start a different
-instance's configuration — the service would come up, look entirely healthy,
-and be the wrong one.
+```bash
+python app/main.py --config ./config.yaml
+```
 
-| | Where the config is read from |
+service-orchestrator writes each instance's file and launches the binary
+pointed at it, so **one binary can serve several instances**.
+
+There is deliberately no fallback. A service that found a config beside itself
+would start whenever one happened to be there — a stale copy from a previous
+deployment, the example shipped in the package, or another instance's file in a
+shared directory. It would come up, subscribe, log success, and be the wrong
+service, with nothing anywhere saying so.
+
+| | |
 |---|---|
-| deployed | beside the binary, in the service's own directory |
-| `--config PATH` | that file; later reads in the process use it too |
-| `--config ""` | refused, naming the problem |
-| from source | the repository root |
-| missing | the service refuses to start, naming the directory it looked in |
+| `--config PATH` | runs that file; later reads in the process use it too |
+| `--config ""` | refused — an unset variable or a dropped argument |
+| no `--config` | exits 2, naming the missing flag |
+| a path that is not a file | refused, naming the path |
+| `--help` | exits 0, which the release build depends on |
 
 Starting unconfigured would be worse than not starting: the service would come
 up subscribed to nothing, publishing nowhere, and look healthy to anything
@@ -62,11 +66,6 @@ watching it.
 The tracked `config.yaml` at the repository root is **not** deployment config.
 It documents the shape a section may take, and the release package ships a copy
 beside the binary as a starting point which the orchestrator then overwrites.
-
-Finding "beside the binary" is the one subtle part: once frozen, `__file__`
-points inside PyInstaller's temporary extraction directory, so a config
-resolved from it is neither the operator's file nor present after the process
-exits. `service_root()` uses `sys.executable` instead.
 
 `app/dependencies/loadConfig.py` exposes `get_config()` and
 `return_config_value(key)`. Prefer a single `get_config()` call — the accessor
