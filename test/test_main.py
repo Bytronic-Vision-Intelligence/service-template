@@ -74,13 +74,17 @@ def test_next_trigger_ignores_queues_that_are_not_triggers():
     assert main.next_trigger(topics) is None
 
 
-def test_next_trigger_discards_malformed_payloads_without_raising(capsys):
+def test_next_trigger_discards_malformed_payloads_without_raising(caplog):
     topics = make_topics()
     topics[0]["queue"] = Queue()
     topics[0]["queue"].put("not json at all")
 
-    assert main.next_trigger(topics) is None
-    assert "Discarding malformed payload" in capsys.readouterr().out
+    with caplog.at_level("WARNING"):
+        assert main.next_trigger(topics) is None
+    # WARNING, not INFO: a payload the service cannot read is something being
+    # published wrongly, and at INFO it reads as routine chatter.
+    assert "Discarding malformed payload" in caplog.text
+    assert "WARNING" in caplog.text
 
 
 def test_start_subscribers_spawns_only_for_subscribed_topics(monkeypatch):
@@ -103,10 +107,14 @@ def test_start_subscribers_spawns_only_for_subscribed_topics(monkeypatch):
     assert "queue" not in topics[2]
 
 
-def test_service_process_function_prints_the_placeholder(capsys):
-    main.service_process_function(None, {"command": "run"}, [])
+def test_service_process_function_logs_the_placeholder(caplog):
+    """Logged, not printed. A frozen binary block-buffers print() output, so
+    under the orchestrator it is invisible until several KB accumulate and is
+    lost entirely on a crash. Logging handlers flush per record."""
+    with caplog.at_level("INFO"):
+        main.service_process_function(None, {"command": "run"}, [])
 
-    assert "insert your program here" in capsys.readouterr().out
+    assert "insert your program here" in caplog.text
 
 
 def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):

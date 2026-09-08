@@ -195,8 +195,12 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 
-docker run -d --rm --name "$SERVICE" --network "$NET" --platform linux/amd64 \
-  -e PYTHONUNBUFFERED=1 -v "$RUN:/svc" -w /svc "python:${PYTHON_VERSION}-slim" \
+# No --platform: the build above did not pin one either, so the binary is
+# whatever this host produces. Pinning amd64 here runs an arm64 binary in an
+# amd64 container, which fails as "No such file or directory" and reads like
+# the service crashed.
+docker run -d --rm --name "$SERVICE" --network "$NET" \
+  -v "$RUN:/svc" -w /svc "python:${PYTHON_VERSION}-slim" \
   "/svc/$(basename "$SCRIPT_PATH" .py)" >/dev/null
 
 for _ in $(seq 1 20); do
@@ -217,11 +221,13 @@ done
 if [ "$received" -eq 1 ]; then
   echo "    receives    ok"
 else
-  echo "    receives    NO - it subscribed and then ignored the message"
+  echo "    receives    NO - nothing arrived within the timeout"
   echo
-  echo "    The binary connects, subscribes and logs success, so nothing in its"
-  echo "    output suggests a problem. It simply never does any work. This"
-  echo "    passes from source, which is why unit tests do not see it."
+  echo "    Either the service is not processing messages, or it is processing"
+  echo "    them and the output is stuck in a block buffer. print() is buffered"
+  echo "    when stdout is a pipe and PYTHONUNBUFFERED does NOT take effect in a"
+  echo "    PyInstaller binary, so anything reporting through print() is"
+  echo "    invisible here and under the orchestrator. Log instead."
   docker logs "$SERVICE" 2>&1 | tail -6 | sed 's/^/      /'
   exit 1
 fi

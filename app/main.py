@@ -1,6 +1,6 @@
 import time
 from json import JSONDecodeError, loads
-from logging import info
+from logging import info, warning
 from queue import Empty, Queue
 from threading import Event
 
@@ -78,8 +78,7 @@ def next_trigger(topics: list):
         try:
             return loads(payload)
         except (JSONDecodeError, TypeError) as exc:
-            info(f"Discarding malformed payload on {topic['topic']}: {exc}")
-            print(f"Discarding malformed payload on {topic['topic']}: {exc}")
+            warning(f"Discarding malformed payload on {topic['topic']}: {exc}")
     return None
 
 
@@ -102,7 +101,7 @@ def service_process_function(client: MQTTClient, message: dict, outputs: list) -
         message: the decoded trigger payload.
         outputs: topic strings this service publishes to.
     """
-    print("insert your program here")
+    info("insert your program here")
 
 
 def main(argv=None):
@@ -143,7 +142,7 @@ def main(argv=None):
             service_process_function(client, message, outputs)
 
     except KeyboardInterrupt:
-        print("Shutting down subscribe listener and exiting.")
+        info("Shutting down subscribe listener and exiting.")
     finally:
         stop_event.set()
         for thread in threads:
