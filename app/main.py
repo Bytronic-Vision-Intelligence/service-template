@@ -25,7 +25,15 @@ def require(config: dict, key: str):
     # somebody meant to fill in, and letting it through moves the failure to
     # whatever first subscripts it.
     if key not in config or config[key] is None:
-        raise SystemExit(f"Missing required config key '{key}' in {loadConfig.config_path()}")
+        # Named only if one has been loaded. require() is also called on
+        # nested sections in contexts that never parsed arguments, and
+        # config_path() refuses to guess there -- which would replace this
+        # message with one about the wrong problem entirely.
+        try:
+            where = f" in {loadConfig.config_path()}"
+        except SystemExit:
+            where = ""
+        raise SystemExit(f"Missing required config key '{key}'{where}")
     return config[key]
 
 
@@ -101,7 +109,10 @@ def service_process_function(client: MQTTClient, message: dict, outputs: list) -
         message: the decoded trigger payload.
         outputs: topic strings this service publishes to.
     """
-    info("insert your program here")
+
+    # insert your service's work here
+
+    return None
 
 
 def main(argv=None):

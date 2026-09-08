@@ -156,7 +156,7 @@ def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):
 
     monkeypatch.setattr(main.time, "sleep", fake_sleep)
 
-    main.main([])
+    main.main(["--config", "stub.yaml"])
 
     assert handled == [({"command": "run"}, ["template/worker/output"])]
     assert captured["stop_event"].is_set()
@@ -167,7 +167,7 @@ def test_main_exits_when_a_required_key_is_missing(monkeypatch):
     monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {"topics": []})
 
     with pytest.raises(SystemExit):
-        main.main([])
+        main.main(["--config", "stub.yaml"])
 
 
 def test_main_configures_logging_before_it_can_fail(monkeypatch):
@@ -187,7 +187,7 @@ def test_main_configures_logging_before_it_can_fail(monkeypatch):
     monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {})
 
     with pytest.raises(SystemExit):
-        main.main([])          # no broker_details -> require() exits
+        main.main(["--config", "stub.yaml"])          # no broker_details -> require() exits
     assert order == ["configured"], "logging was not configured before the first failure"
     _logging.getLogger().handlers[:] = _logging.getLogger().handlers
 
@@ -198,7 +198,7 @@ def test_the_configured_level_comes_from_the_service_config(monkeypatch):
     monkeypatch.setattr(logging_setup, "configure", lambda level=None: seen.append(level))
     monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {"logging": {"level": "DEBUG"}})
     with pytest.raises(SystemExit):
-        main.main([])
+        main.main(["--config", "stub.yaml"])
     assert seen == ["DEBUG"]
 
 
@@ -210,7 +210,7 @@ def test_a_config_without_a_logging_section_still_starts(monkeypatch):
     monkeypatch.setattr(logging_setup, "configure", lambda level=None: seen.append(level))
     monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {})
     with pytest.raises(SystemExit):
-        main.main([])
+        main.main(["--config", "stub.yaml"])
     assert seen == [logging_setup.DEFAULT_LEVEL]
 
 
@@ -250,25 +250,16 @@ def test_the_config_shipped_in_the_repo_satisfies_what_main_requires():
 
 def test_main_refuses_an_empty_config_path(monkeypatch, tmp_path):
     """`--config ""` reaches main from an unset shell variable or a launcher
-    that dropped an argument. Falling back to the default would start a
-    DIFFERENT instance's configuration -- the service would come up, look
-    entirely healthy, and be the wrong one.
-
-    Since one binary serves several instances, that is not a rare edge: it is
-    the failure mode of the thing the flag exists for.
-    """
-    monkeypatch.setattr(main.loadConfig, "service_root", lambda: tmp_path)
-    (tmp_path / "config.yaml").write_text("mqtt:\n  mqtt_ip: 10.0.0.1\n")
+    that dropped an argument. With no fallback there is nothing to quietly
+    start instead, and the refusal says which flag is at fault."""
     monkeypatch.setattr(main.loadConfig, "_ACTIVE", None)
-
-    with pytest.raises(SystemExit, match="empty path"):
+    with pytest.raises(SystemExit, match="--config is required"):
         main.main(["--config", ""])
 
 
-def test_main_uses_a_supplied_config_over_the_default(monkeypatch, tmp_path):
-    """The point of the flag: one binary, several instances."""
-    monkeypatch.setattr(main.loadConfig, "service_root", lambda: tmp_path)
-    (tmp_path / "config.yaml").write_text("mqtt:\n  mqtt_ip: 10.0.0.1\n")
+def test_main_runs_the_config_it_is_given(monkeypatch, tmp_path):
+    """One binary, several instances: the file named on the command line is
+    the one that runs, and nothing else is consulted."""
     other = tmp_path / "instance-2.yaml"
     other.write_text("mqtt:\n  mqtt_ip: 10.0.0.2\n")
     monkeypatch.setattr(main.loadConfig, "_ACTIVE", None)
