@@ -1,7 +1,7 @@
 # Application
 
-`main.py` is the entrypoint. It loads the config selected by `--config` or
-`--test`, connects to the broker, starts one subscriber thread per subscribed
+`main.py` is the entrypoint. It reads `config.yaml` from the directory the
+service runs from, connects to the broker, starts one subscriber thread per subscribed
 topic, and calls `worker_process_function` for every trigger message.
 
 ## What to edit
@@ -30,20 +30,30 @@ imported by tests without a config file present.
 
 `dependencies/loadConfig.py`:
 
-- `config_path()` — resolves `--config <path>`, else `--test`, else exits
+- `service_root()` — the directory the service runs from: beside the binary when
+  frozen, the repository root from source
+- `config_path()` — `service_root() / "config.yaml"`, the only place a config
+  is read from
 - `load_yaml(path)` — parses a YAML mapping; `{}` if missing, empty, or not a mapping
-- `get_config()` — the resolved config; exits if the selected file is absent
+- `get_config()` — the config; exits, naming the directory, if it is absent
 - `return_config_value(key)` — one value; re-reads the file on each call
+- `parse_cli(argv)` — handles `--help` and nothing else
 
-A missing `--config` file is a hard error rather than an empty dict, because
-service-orchestrator passes a path it has just written — if it is not there,
-the deployment is broken.
+A missing config is a hard error rather than an empty dict: the orchestrator
+writes that file when it launches a service, so its absence means the
+deployment is broken. Starting anyway would bring the service up subscribed to
+nothing and publishing nowhere, looking healthy to anything watching it.
+
+`service_root()` uses `sys.executable` rather than `__file__` because once
+PyInstaller has frozen the service `__file__` points inside a temporary
+extraction directory — so a config resolved from it is neither the operator's
+file nor present after the process exits.
 
 ## Running
 
 ```bash
-python app/main.py --config /path/to/config.yaml   # deployment
-python app/main.py --test                          # bundled example config
+cp dependencies/config.yaml ../config.yaml   # a starting point
+python main.py
 ```
 
 See the repository [README](../Readme.md) for the orchestrator layout.

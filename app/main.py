@@ -6,7 +6,7 @@ from threading import Event
 
 from mqtt_client import MQTTClient, MQTTConfig
 
-from dependencies import loadConfig
+from dependencies import loadConfig, logging_setup
 from dependencies.mqtt_functions import start_subscribe_thread
 
 
@@ -102,8 +102,21 @@ def worker_process_function(client: MQTTClient, message: dict, outputs: list) ->
     print("insert your program here")
 
 
-def main():
+def main(argv=None):
+    # First, and before anything that can fail. The release build smoke-tests
+    # every binary with --help and fails on a non-zero exit, so a service that
+    # reached get_config() first would exit 1 for want of a config file that
+    # only exists once deployed -- and no release could ever be published.
+    loadConfig.parse_cli(argv)
+
     config = loadConfig.get_config()
+
+    # Before anything else that might log. Until this runs the root logger sits
+    # at WARNING and every info() call is dropped, so a service that failed
+    # here would report nothing about why.
+    log_settings = config.get("logging") or {}
+    logging_setup.configure(log_settings.get("level", logging_setup.DEFAULT_LEVEL))
+
     broker = require(config, "broker_details")
     topics = require(config, "topics")
 

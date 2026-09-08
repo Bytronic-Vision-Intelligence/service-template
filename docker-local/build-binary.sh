@@ -91,6 +91,14 @@ if docker run --rm -v "$TREE:/work" "python:${PYTHON_VERSION}-slim" \
 else
   echo "==> FAIL: the binary was built but does not run. This is exactly what"
   echo "    breaks a release: the build succeeds and only running it shows."
+  if [ "$untracked" -gt 0 ]; then
+    echo
+    echo "    NOTE: $untracked untracked file(s) were excluded from this build,"
+    echo "    because CI builds from a checkout and would not have them either."
+    echo "    A new module that main.py imports but nobody has `git add`ed fails"
+    echo "    exactly like this. Untracked:"
+    (cd "$REPO_ROOT" && git ls-files --others --exclude-standard | sed 's/^/      /')
+  fi
   exit 1
 fi
 
@@ -130,7 +138,11 @@ fail=0
 BIN_IN_ZIP="$TREE/.pkg/x/$(basename "$SCRIPT_PATH" .py)"
 if [ -x "$BIN_IN_ZIP" ]; then echo "    executable  ok"; else echo "    executable  NO - the customer cannot run this"; fail=1; fi
 if [ -f "$TREE/.pkg/x/config.yaml" ]; then echo "    config.yaml ok"; else echo "    config.yaml MISSING"; fail=1; fi
-if [ -d "$TREE/.pkg/x/logs" ]; then echo "    logs/       ok"; else echo "    logs/       MISSING"; fail=1; fi
+# Asserted ABSENT, not present. Services do not write log files: they print,
+# the orchestrator tees to project/logging/<service>, and logging-service is
+# the only thing that writes to disk. prod-4 shipped an empty logs/ on every
+# platform that nothing ever opened.
+if [ -d "$TREE/.pkg/x/logs" ]; then echo "    no logs/    NO - an empty directory is shipping"; fail=1; else echo "    no logs/    ok"; fi
 
 # The point of the whole exercise: does the unpacked thing actually launch?
 if docker run --rm -v "$TREE/.pkg/x:/c" "python:${PYTHON_VERSION}-slim" \

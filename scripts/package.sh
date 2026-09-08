@@ -17,11 +17,13 @@
 #     as 0644. The customer then unzips something they cannot run, and no
 #     privilege fixes it: Linux requires at least one x bit even for root.
 #
-#   * logs/. The build does not create it; this does. It is part of what ships,
-#     not part of what is built, and creating it here means one place owns it
-#     and no artifact behaviour can lose it on the way.
+# Release prod-1 shipped without the executable bit, having passed every job.
 #
-# Release prod-1 shipped without either, having passed every job.
+# There is deliberately no logs/ directory. Services do not write log files:
+# they print, the orchestrator tees every child's output to
+# project/logging/<service>, and logging-service is the only thing that writes
+# to disk -- under its own configured directory. A logs/ folder in every
+# service would be an empty directory nothing ever opens.
 
 set -euo pipefail
 
@@ -50,10 +52,6 @@ for dir in "$BUILD_DIR"/build-*; do
   for candidate in "$dir/$binary" "$dir/$binary.exe"; do
     [ -f "$candidate" ] && chmod +x "$candidate"
   done
-
-  # An empty directory is not preserved by an artifact upload, so it is made
-  # here where nothing can drop it before the zip is written.
-  mkdir -p "$dir/logs"
 
   ( cd "$dir" && zip -qr "${OUT_DIR}/${SERVICE}-${platform}.zip" . )
   found=$((found + 1))

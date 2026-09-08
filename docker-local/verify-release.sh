@@ -15,7 +15,7 @@
 #   * the detached signature verifies under the key committed in scripts/sign.py
 #   * the zip's SHA256 matches SHA256SUMS
 #   * the binary inside is EXECUTABLE
-#   * config.yaml and logs/ are present
+#   * config.yaml is present, and no empty logs/ is shipped
 #
 # gh runs on the host, for its credentials; the signature check runs in a
 # container, so nothing needs installing here.
@@ -106,10 +106,12 @@ for zpath in sorted(work.glob("*.zip")):
             print(f"  {needed:<11} {'ok' if ok else 'MISSING'}")
             if not ok:
                 failures.append(f"{name}: {needed} missing")
-        has_logs = any(n.startswith("logs/") or n == "logs/" for n in names)
-        print(f"  logs/       {'ok' if has_logs else 'MISSING'}")
-        if not has_logs:
-            failures.append(f"{name}: logs/ missing")
+        # Absent by design: logging goes over MQTT. A logs/ here means a
+        # service package is shipping an empty directory nothing opens.
+        has_logs = any(n.startswith("logs") for n in names)
+        print(f"  no logs/    {'NO - empty dir shipped' if has_logs else 'ok'}")
+        if has_logs:
+            failures.append(f"{name}: ships an empty logs/ directory")
 
 print()
 if failures:

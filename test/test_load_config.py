@@ -1,106 +1,98 @@
+# test/test_load_config.py
+"""Finding the one config a service is allowed to read.
+
+A service takes no path argument. `config.yaml` sits beside its binary and the
+orchestrator writes it there, so every test here is about that single rule and
+the one way it is easy to get wrong.
+"""
 import sys
+from pathlib import Path
 
 import pytest
 
-from dependencies.loadConfig import (
-    LOCAL_CONFIG_PATH,
-    config_path,
-    get_config,
-    load_yaml,
-    return_config_value,
-)
+from dependencies import loadConfig
 
 
-def test_test_flag_selects_the_bundled_config():
-    assert config_path() == LOCAL_CONFIG_PATH
+@pytest.fixture
+def rooted(tmp_path, monkeypatch):
+    """Pretend the service runs from tmp_path."""
+    monkeypatch.setattr(loadConfig, "service_root", lambda: tmp_path)
+    return tmp_path
 
 
-def test_config_flag_is_used_verbatim(monkeypatch, tmp_path):
-    # service-orchestrator launches every service with --config <abs path>
-    supplied = tmp_path / "orchestrator-written.yaml"
-    monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(supplied)])
-
-    assert config_path() == supplied
+def test_the_config_sits_beside_the_binary(rooted):
+    assert loadConfig.config_path() == rooted / "config.yaml"
 
 
-def test_no_flag_exits(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["main.py"])
+def test_a_frozen_service_looks_next_to_its_executable(monkeypatch, tmp_path):
+    """The one subtle part, and the reason the previous loader was wrong.
 
-    with pytest.raises(SystemExit):
-        config_path()
-
-
-def test_missing_config_file_exits_rather_than_starting_empty(monkeypatch, tmp_path):
-    monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(tmp_path / "absent.yaml")])
-
-    with pytest.raises(SystemExit):
-        get_config()
-
-
-def test_load_yaml_returns_empty_for_missing_empty_and_non_mapping(tmp_path):
-    assert load_yaml(tmp_path / "missing.yaml") == {}
-
-    empty = tmp_path / "empty.yaml"
-    empty.write_text("", encoding="utf-8")
-    assert load_yaml(empty) == {}
-
-    scalar = tmp_path / "scalar.yaml"
-    scalar.write_text("a bare string\n", encoding="utf-8")
-    assert load_yaml(scalar) == {}
-
-
-def test_bundled_config_supplies_every_key_main_requires():
-    # main() refuses to start without these, so the shipped example must have them
-    config = get_config()
-
-    assert "broker_details" in config
-    assert "topics" in config
-    assert {"mqtt_ip", "mqtt_port"} <= set(config["broker_details"])
-
-
-def test_return_config_value():
-    config = get_config()
-    assert return_config_value("broker_details") == config["broker_details"]
-
-    with pytest.raises(KeyError):
-        return_config_value("non_existent_key")
-
-    with pytest.raises(ValueError):
-        return_config_value("")
-
-
-def test_help_exits_zero_and_describes_the_flags(monkeypatch, capsys):
-    """A frozen binary must answer --help successfully.
-
-    The release pipeline's build action smoke-tests every binary it produces by
-    running it with `--help`, and treats a non-zero exit as a broken build --
-    there is no input to change that argument. `add_help=False` meant --help
-    fell through to "Missing required --config path" and exit 1, so a
-    perfectly good binary failed the build.
-
-    It is also what a customer types first.
+    Once frozen, `__file__` points inside sys._MEIPASS -- a directory created
+    on launch and deleted on exit -- so a config resolved from it is neither
+    the operator's file nor present afterwards. The service would read a stale
+    bundled copy and ignore everything the operator wrote, silently.
     """
-    monkeypatch.setattr(sys, "argv", ["main.py", "--help"])
+    binary = tmp_path / "camera-service" / "camera-service"
+    binary.parent.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(binary))
+    assert loadConfig.service_root() == binary.parent
+
+
+def test_from_source_the_root_is_the_repository_root(monkeypatch):
+    """Same relationship as when frozen: one level above app/. Otherwise a
+    developer and the deployed binary read different files."""
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert loadConfig.service_root() == Path(loadConfig.__file__).resolve().parents[2]
+
+
+def test_the_config_is_read(rooted):
+    (rooted / "config.yaml").write_text("mqtt:\n  ip: 10.0.0.1\n")
+    assert loadConfig.get_config()["mqtt"]["ip"] == "10.0.0.1"
+
+
+def test_a_missing_config_stops_the_service(rooted):
+    """Starting unconfigured is worse than not starting: the service comes up
+    subscribed to nothing, publishing nowhere, and looks healthy to anything
+    watching it."""
+    with pytest.raises(SystemExit, match="config.yaml"):
+        loadConfig.get_config()
+
+
+def test_the_refusal_names_where_it_looked(rooted):
+    """An operator who put the file in the wrong place needs the path, not
+    just the filename."""
+    with pytest.raises(SystemExit, match=str(rooted)):
+        loadConfig.get_config()
+
+
+@pytest.mark.parametrize("text", ["", "\n", "- a\n- b\n", "just a string\n"])
+def test_an_empty_or_non_mapping_config_reads_as_empty(rooted, text):
+    """A list or a bare string is not a config section. Returning it would push
+    an AttributeError into whatever asked for a key."""
+    (rooted / "config.yaml").write_text(text)
+    assert loadConfig.get_config() == {}
+
+
+def test_return_config_value_names_the_file_it_looked_in(rooted):
+    (rooted / "config.yaml").write_text("mqtt: {}\n")
+    with pytest.raises(KeyError, match="config.yaml"):
+        loadConfig.return_config_value("absent")
+
+
+def test_help_exits_zero(capsys):
+    """The release build smoke-tests every binary with --help and fails on a
+    non-zero exit. There is no input to change that argument, so a service
+    that cannot answer --help cannot ship."""
     with pytest.raises(SystemExit) as exit_info:
-        config_path()
+        loadConfig.parse_cli(["--help"])
     assert exit_info.value.code == 0
-    printed = capsys.readouterr().out
-    assert "--config" in printed
-    assert "--test" in printed
+    assert "config.yaml" in capsys.readouterr().out
 
 
-def test_help_is_offered_by_its_short_flag_too(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["main.py", "-h"])
+def test_no_config_argument_is_accepted():
+    """There is one place a config can be, so there is nothing to pass. A
+    --config flag would reintroduce two sources of truth."""
     with pytest.raises(SystemExit) as exit_info:
-        config_path()
-    assert exit_info.value.code == 0
-
-
-def test_no_flag_still_exits_non_zero(monkeypatch):
-    """Adding --help must not turn "you forgot --config" into a success. A
-    service that starts with no configuration and exits 0 looks healthy to
-    anything supervising it."""
-    monkeypatch.setattr(sys, "argv", ["main.py"])
-    with pytest.raises(SystemExit) as exit_info:
-        config_path()
+        loadConfig.parse_cli(["--config", "/somewhere/else.yaml"])
     assert exit_info.value.code != 0

@@ -147,7 +147,7 @@ def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):
 
     monkeypatch.setattr(main.time, "sleep", fake_sleep)
 
-    main.main()
+    main.main([])
 
     assert handled == [({"command": "run"}, ["template/worker/output"])]
     assert captured["stop_event"].is_set()
@@ -158,4 +158,61 @@ def test_main_exits_when_a_required_key_is_missing(monkeypatch):
     monkeypatch.setattr(main.loadConfig, "get_config", lambda: {"topics": []})
 
     with pytest.raises(SystemExit):
-        main.main()
+        main.main([])
+
+
+def test_main_configures_logging_before_it_can_fail(monkeypatch):
+    """Until configure() runs, the root logger sits at WARNING and every
+    info() call is dropped. A service that failed while starting would then
+    report nothing about why -- which is precisely when the log matters.
+
+    So it must run before the first thing that can raise: `require`, which
+    exits when a config key is missing."""
+    import logging as _logging
+
+    from dependencies import logging_setup
+
+    order = []
+    monkeypatch.setattr(logging_setup, "configure",
+                        lambda level=None: order.append("configured"))
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda: {})
+
+    with pytest.raises(SystemExit):
+        main.main([])          # no broker_details -> require() exits
+    assert order == ["configured"], "logging was not configured before the first failure"
+    _logging.getLogger().handlers[:] = _logging.getLogger().handlers
+
+
+def test_the_configured_level_comes_from_the_service_config(monkeypatch):
+    seen = []
+    from dependencies import logging_setup
+    monkeypatch.setattr(logging_setup, "configure", lambda level=None: seen.append(level))
+    monkeypatch.setattr(main.loadConfig, "get_config",
+                        lambda: {"logging": {"level": "DEBUG"}})
+    with pytest.raises(SystemExit):
+        main.main([])
+    assert seen == ["DEBUG"]
+
+
+def test_a_config_without_a_logging_section_still_starts(monkeypatch):
+    """Every existing service config predates this setting. A missing section
+    must mean the default, not a crash on startup."""
+    seen = []
+    from dependencies import logging_setup
+    monkeypatch.setattr(logging_setup, "configure", lambda level=None: seen.append(level))
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda: {})
+    with pytest.raises(SystemExit):
+        main.main([])
+    assert seen == [logging_setup.DEFAULT_LEVEL]
+
+
+def test_main_answers_help_before_looking_for_a_config(monkeypatch):
+    """--help must exit 0 on a binary that has no config beside it, which is
+    every binary the release pipeline builds. Reaching get_config() first
+    exits 1 for want of a file that only exists once deployed, and no release
+    could ever be published."""
+    monkeypatch.setattr(main.loadConfig, "get_config",
+                        lambda: pytest.fail("looked for a config before --help"))
+    with pytest.raises(SystemExit) as exit_info:
+        main.main(["--help"])
+    assert exit_info.value.code == 0

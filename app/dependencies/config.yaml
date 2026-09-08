@@ -1,11 +1,14 @@
-# Default configuration for standalone runs (python app/main.py --test).
+# The documented shape of a service's config section. NOT deployment config.
 #
-# In deployment this file is NOT used: service-orchestrator writes the real
-# config into this repository's root and launches the service with
-# `app/main.py --config <path>`. Keep this file as a documented example of the
-# shape a service section must have.
+# A service reads `config.yaml` from the directory it runs from -- beside its
+# own binary -- and service-orchestrator writes that file from its own config,
+# which is the single source of truth. Nothing reads this copy at runtime; the
+# release package ships it beside the binary as a starting point, and the
+# orchestrator overwrites it.
+#
+# It is here so the loader, and anyone reading the repository, can see what a
+# section may contain.
 
-# Broker connection ------------------------------------------------------
 broker_details:
   mqtt_ip: localhost
   mqtt_port: 1883
@@ -22,3 +25,11 @@ topics:
     topic: template/worker/output
     is_subscribe: false
     is_trigger: false
+
+# Logging ----------------------------------------------------------------
+# Services do not write log files. They print; service-orchestrator tees every
+# child's output to project/logging/<service>; logging-service writes it to
+# disk under its own configured directory. This only sets how much this
+# service says. DEBUG | INFO | WARNING | ERROR | CRITICAL
+logging:
+  level: INFO

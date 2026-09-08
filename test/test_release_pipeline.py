@@ -237,11 +237,11 @@ def test_the_binary_is_made_executable_before_zipping():
     assert 'basename "$SCRIPT_PATH"' in source
 
 
-def test_packaging_creates_the_logs_directory():
-    """An empty directory does not survive an artifact upload, so the build
-    cannot hand one over. Packaging makes it, which is also the only place that
-    can be tested without a round-trip through GitHub."""
-    assert 'mkdir -p "$dir/logs"' in PACKAGER.read_text()
+def test_packaging_ships_no_logs_directory():
+    """Logging goes over MQTT: services print, the orchestrator tees to
+    project/logging/<service>, and logging-service writes the files. A logs/
+    folder here would ship empty to every customer, which prod-4 did."""
+    assert 'mkdir -p "$dir/logs"' not in PACKAGER.read_text()
 
 
 def test_the_entry_script_is_declared_once(workflow):

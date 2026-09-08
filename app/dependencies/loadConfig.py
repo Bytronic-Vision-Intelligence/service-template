@@ -1,105 +1,99 @@
+"""Read this service's configuration from beside its own binary.
+
+One rule: ``config.yaml`` sits in the directory the service runs from, and the
+orchestrator puts it there. A service is never configured by hand, never runs
+standalone in deployment, and takes no path argument -- there is nothing to
+pass, because there is only one place to look.
+
+    <root>/
+        bytronic-orchestrator
+        config.yaml              <- the orchestrator's own, the source of truth
+        camera-service/
+            camera-service       <- the binary
+            config.yaml          <- written here by the orchestrator
+
+The bundled copy in this repository is not deployment configuration. It is the
+documented shape of a section, so the loader and anyone reading the repo can
+see what a service accepts.
+
+Finding "beside the binary" is the one subtle part. Once PyInstaller has frozen
+the service, ``__file__`` points inside ``sys._MEIPASS`` -- a temporary
+directory that is created on launch and deleted on exit -- so a config resolved
+from it is neither the operator's file nor even present after the process ends.
+``sys.executable`` is the real location. Getting this wrong is silent: the
+service reads a stale bundled copy and ignores everything the operator wrote.
+"""
+
 import argparse
 import sys
-import yaml
 from pathlib import Path
 
+import yaml
 
-# Fallback used by --test only. service-orchestrator passes an absolute
-# --config path in deployment, so this file is a standalone-development aid.
-LOCAL_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+CONFIG_NAME = "config.yaml"
+
+
+def service_root() -> Path:
+    """The directory the service runs from, frozen or not.
+
+    Frozen, that is where the binary sits. From source it is the repository
+    root, which is the same relationship: one level above ``app/``.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def config_path() -> Path:
-    """Resolve which config file to read.
-
-    service-orchestrator launches every service as
-    ``app/main.py --config <path>``, so ``--config`` is the deployment path.
-    ``--test`` selects the bundled example config for standalone runs.
-
-    Returns:
-        path: the config file to load.
-    Raises:
-        SystemExit: when neither flag is supplied.
-    """
-    parser = argparse.ArgumentParser(
-        prog=Path(sys.argv[0]).name,
-        description="A Bytronic service. Started by service-orchestrator, "
-                    "which supplies --config.",
-        add_help=False)
-    # -h/--help is declared explicitly rather than left to argparse's default,
-    # because the rest of this parser deliberately ignores unknown arguments
-    # (parse_known_args) so a service can take flags of its own. With
-    # add_help=True those two settings interact badly; with add_help=False and
-    # no declaration at all, --help fell through to the SystemExit below and
-    # exited 1.
-    #
-    # Exiting non-zero on --help is not cosmetic: the release pipeline's build
-    # action smoke-tests every binary by running it with --help, and treats a
-    # non-zero exit as a broken build. There is no input to change that
-    # argument, so a service that cannot answer --help cannot be released.
-    parser.add_argument("-h", "--help", action="help",
-                        help="show this message and exit")
-    parser.add_argument("--config", default=None, metavar="PATH",
-                        help="configuration file to run with")
-    parser.add_argument("--test", action="store_true",
-                        help="use the bundled example config, for standalone runs")
-    args, _ = parser.parse_known_args()
-    if args.config:
-        return Path(args.config)
-    if args.test:
-        return LOCAL_CONFIG_PATH
-    raise SystemExit("Missing required --config path (or pass --test to use local config).")
+    """Where this service reads its configuration from."""
+    return service_root() / CONFIG_NAME
 
 
 def load_yaml(path: Path) -> dict:
-    """Read a YAML mapping from `path`.
-
-    Args:
-        path: file to read.
-    Returns:
-        data: the parsed mapping, or an empty dict if the file is missing,
-            empty, or does not contain a mapping at the top level.
-    """
+    """Read a YAML mapping, or an empty dict when there is nothing usable."""
     if not path.is_file():
         return {}
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
     return data if isinstance(data, dict) else {}
 
 
 def get_config() -> dict:
-    """Load the configuration selected by --config or --test.
+    """This service's configuration.
 
-    Returns:
-        config: the parsed configuration mapping.
     Raises:
-        SystemExit: when the selected file does not exist. A missing file means
-            the orchestrator handed over a path it did not write, so failing
-            here is preferable to starting on an empty config.
+        SystemExit: when the file is absent. Starting with no configuration is
+            worse than not starting: the service comes up subscribed to
+            nothing, publishing nowhere, and looks healthy to anything
+            watching it.
     """
     path = config_path()
     if not path.is_file():
-        raise SystemExit(f"Config file not found: {path}")
+        raise SystemExit(
+            f"No {CONFIG_NAME} beside the binary (looked in {path.parent}). "
+            "The orchestrator writes it there when it launches a service.")
     return load_yaml(path)
 
 
 def return_config_value(key: str):
-    """Return the value for `key` from the loaded config.
-
-    Re-reads the config file on every call. Prefer a single `get_config()` in
-    your entrypoint when reading more than one key.
-
-    Args:
-        key: a top-level key from the yaml file.
-    Returns:
-        the value stored under `key`.
-    Raises:
-        ValueError: when `key` is empty.
-        KeyError: when `key` is not present in the configuration.
-    """
-    if not key:
-        raise ValueError("Key cannot be empty.")
+    """One top-level value, or a KeyError naming the file it is missing from."""
     config = get_config()
     if key not in config:
-        raise KeyError(f"Key '{key}' not found in configuration.")
+        raise KeyError(f"Key '{key}' not found in {config_path()}")
     return config[key]
+
+
+def parse_cli(argv=None) -> argparse.Namespace:
+    """Handle the only argument a service takes: --help.
+
+    It takes no --config: there is one place a config can be. --help is here
+    because the release pipeline's build action smoke-tests every binary by
+    running it with --help and fails the build on a non-zero exit, and because
+    it is what anyone types first.
+    """
+    parser = argparse.ArgumentParser(
+        prog=Path(sys.argv[0]).name,
+        description="A Bytronic service. Reads config.yaml from its own "
+                    "directory, which service-orchestrator writes.")
+    parser.parse_args(argv)
+    return parser

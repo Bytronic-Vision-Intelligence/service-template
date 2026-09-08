@@ -22,10 +22,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run standalone against the bundled example config:
+Run it, with a `config.yaml` in the repository root:
 
 ```bash
-python app/main.py --test
+cp app/dependencies/config.yaml ./config.yaml   # a starting point
+python app/main.py
 ```
 
 Run the tests:
@@ -36,13 +37,29 @@ python -m pytest test
 
 ## Configuration
 
-The service takes its config from a file and will not start without one:
+**A service reads `config.yaml` from the directory it runs from, and nowhere
+else.** There is no `--config` flag, because there is nothing to choose
+between: service-orchestrator writes that file from its own config, which is
+the single source of truth.
 
-| Invocation | Config used |
+| | Where `config.yaml` is read from |
 |---|---|
-| `python app/main.py --config <path>` | the supplied file — how deployment works |
-| `python app/main.py --test` | `app/dependencies/config.yaml`, the bundled example |
-| `python app/main.py` | none; exits with an error |
+| deployed | beside the binary, in the service's own directory |
+| from source | the repository root |
+| missing | the service refuses to start, naming the directory it looked in |
+
+Starting unconfigured would be worse than not starting: the service would come
+up subscribed to nothing, publishing nowhere, and look healthy to anything
+watching it.
+
+`app/dependencies/config.yaml` is **not** deployment config. It documents the
+shape of a section, and the release package ships a copy beside the binary as a
+starting point which the orchestrator then overwrites.
+
+Finding "beside the binary" is the one subtle part: once frozen, `__file__`
+points inside PyInstaller's temporary extraction directory, so a config
+resolved from it is neither the operator's file nor present after the process
+exits. `service_root()` uses `sys.executable` instead.
 
 `app/dependencies/loadConfig.py` exposes `get_config()` and
 `return_config_value(key)`. Prefer a single `get_config()` call — the accessor
@@ -69,7 +86,7 @@ service-orchestrator/
 
 To take part, a service must:
 
-1. Accept `--config <path>` on `app/main.py`
+1. Read `config.yaml` from its own directory (`loadConfig.get_config()`)
 2. Keep its entrypoint at `app/main.py`
 3. Carry its own virtualenv at `.venv/`
 4. Use a directory name matching its config section, minus any `-2`/`-3`
