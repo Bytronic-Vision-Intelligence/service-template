@@ -123,7 +123,7 @@ def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):
                  "topics": make_topics()},
         "service": {},
     }
-    monkeypatch.setattr(main.loadConfig, "get_config", lambda: config)
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: config)
     monkeypatch.setattr(main, "MQTTClient", FakeMQTTClient)
     monkeypatch.setattr(main, "MQTTConfig", FakeMQTTConfig)
 
@@ -164,7 +164,7 @@ def test_main_processes_one_message_then_shuts_down_cleanly(monkeypatch):
 
 
 def test_main_exits_when_a_required_key_is_missing(monkeypatch):
-    monkeypatch.setattr(main.loadConfig, "get_config", lambda: {"topics": []})
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {"topics": []})
 
     with pytest.raises(SystemExit):
         main.main([])
@@ -184,7 +184,7 @@ def test_main_configures_logging_before_it_can_fail(monkeypatch):
     order = []
     monkeypatch.setattr(logging_setup, "configure",
                         lambda level=None: order.append("configured"))
-    monkeypatch.setattr(main.loadConfig, "get_config", lambda: {})
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {})
 
     with pytest.raises(SystemExit):
         main.main([])          # no broker_details -> require() exits
@@ -196,8 +196,7 @@ def test_the_configured_level_comes_from_the_service_config(monkeypatch):
     seen = []
     from dependencies import logging_setup
     monkeypatch.setattr(logging_setup, "configure", lambda level=None: seen.append(level))
-    monkeypatch.setattr(main.loadConfig, "get_config",
-                        lambda: {"logging": {"level": "DEBUG"}})
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {"logging": {"level": "DEBUG"}})
     with pytest.raises(SystemExit):
         main.main([])
     assert seen == ["DEBUG"]
@@ -209,7 +208,7 @@ def test_a_config_without_a_logging_section_still_starts(monkeypatch):
     seen = []
     from dependencies import logging_setup
     monkeypatch.setattr(logging_setup, "configure", lambda level=None: seen.append(level))
-    monkeypatch.setattr(main.loadConfig, "get_config", lambda: {})
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: {})
     with pytest.raises(SystemExit):
         main.main([])
     assert seen == [logging_setup.DEFAULT_LEVEL]
@@ -220,8 +219,7 @@ def test_main_answers_help_before_looking_for_a_config(monkeypatch):
     every binary the release pipeline builds. Reaching get_config() first
     exits 1 for want of a file that only exists once deployed, and no release
     could ever be published."""
-    monkeypatch.setattr(main.loadConfig, "get_config",
-                        lambda: pytest.fail("looked for a config before --help"))
+    monkeypatch.setattr(main.loadConfig, "get_config", lambda supplied=None: pytest.fail("looked for a config before --help"))
     with pytest.raises(SystemExit) as exit_info:
         main.main(["--help"])
     assert exit_info.value.code == 0
@@ -248,3 +246,36 @@ def test_the_config_shipped_in_the_repo_satisfies_what_main_requires():
     main.require(config, "service")
     for key in ("mqtt_ip", "mqtt_port"):
         assert key in mqtt, f"{key} missing from the shipped config"
+
+
+def test_main_refuses_an_empty_config_path(monkeypatch, tmp_path):
+    """`--config ""` reaches main from an unset shell variable or a launcher
+    that dropped an argument. Falling back to the default would start a
+    DIFFERENT instance's configuration -- the service would come up, look
+    entirely healthy, and be the wrong one.
+
+    Since one binary serves several instances, that is not a rare edge: it is
+    the failure mode of the thing the flag exists for.
+    """
+    monkeypatch.setattr(main.loadConfig, "service_root", lambda: tmp_path)
+    (tmp_path / "config.yaml").write_text("mqtt:\n  mqtt_ip: 10.0.0.1\n")
+    monkeypatch.setattr(main.loadConfig, "_ACTIVE", None)
+
+    with pytest.raises(SystemExit, match="empty path"):
+        main.main(["--config", ""])
+
+
+def test_main_uses_a_supplied_config_over_the_default(monkeypatch, tmp_path):
+    """The point of the flag: one binary, several instances."""
+    monkeypatch.setattr(main.loadConfig, "service_root", lambda: tmp_path)
+    (tmp_path / "config.yaml").write_text("mqtt:\n  mqtt_ip: 10.0.0.1\n")
+    other = tmp_path / "instance-2.yaml"
+    other.write_text("mqtt:\n  mqtt_ip: 10.0.0.2\n")
+    monkeypatch.setattr(main.loadConfig, "_ACTIVE", None)
+
+    seen = {}
+    monkeypatch.setattr(main, "require",
+                        lambda config, key: seen.setdefault(key, config.get(key)) or {})
+    with pytest.raises(Exception):
+        main.main(["--config", str(other)])
+    assert seen["mqtt"]["mqtt_ip"] == "10.0.0.2"

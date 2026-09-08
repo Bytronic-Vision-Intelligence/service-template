@@ -14,6 +14,17 @@ import pytest
 from dependencies import loadConfig
 
 
+@pytest.fixture(autouse=True)
+def _forget_the_active_config(monkeypatch):
+    """Reset the resolved path between tests.
+
+    It is deliberately process state -- a service reads one config for its
+    lifetime -- so without this a test inherits whatever file the previous one
+    settled on.
+    """
+    monkeypatch.setattr(loadConfig, "_ACTIVE", None)
+
+
 @pytest.fixture
 def rooted(tmp_path, monkeypatch):
     """Pretend the service runs from tmp_path."""
@@ -97,9 +108,66 @@ def test_help_exits_zero(capsys):
     assert "config.yaml" in capsys.readouterr().out
 
 
-def test_no_config_argument_is_accepted():
-    """There is one place a config can be, so there is nothing to pass. A
-    --config flag would reintroduce two sources of truth."""
+def test_a_config_path_can_be_supplied():
+    """One binary serves several instances, each pointed at its own file."""
+    assert loadConfig.parse_cli(["--config", "/somewhere/else.yaml"]).config == \
+        "/somewhere/else.yaml"
+
+
+def test_omitting_the_flag_leaves_the_path_unset():
+    """None means "beside the binary", which is what the orchestrator writes."""
+    assert loadConfig.parse_cli([]).config is None
+
+
+# One binary can serve several instances, each pointed at its own config, so a
+# path may be supplied. These cover what happens when it is, and when what is
+# supplied is nothing at all.
+
+
+def test_an_explicit_config_path_is_used(tmp_path):
+    other = tmp_path / "instance-2.yaml"
+    other.write_text("mqtt:\n  ip: 10.0.0.2\n")
+    assert loadConfig.get_config(other)["mqtt"]["ip"] == "10.0.0.2"
+
+
+@pytest.mark.parametrize("empty", ["", "   ", "\t", "\n"])
+def test_an_empty_config_path_is_refused(empty, rooted):
+    """Falling back to the default here would start a DIFFERENT instance's
+    configuration. The service would come up, look entirely healthy, and be
+    the wrong one -- which is worse than not starting, because nothing
+    anywhere would say so.
+
+    An empty --config is a caller that meant to pass something and passed
+    nothing: an unset shell variable, a dropped argument in a launcher.
+    """
+    (rooted / "config.yaml").write_text("mqtt:\n  ip: 10.0.0.1\n")
+    with pytest.raises(SystemExit, match="empty path"):
+        loadConfig.get_config(empty)
+
+
+def test_the_refusal_does_not_quietly_read_the_default(rooted):
+    """The failure must be the empty path, not a missing file: with a perfectly
+    good default sitting there, a fallback would succeed and hide the bug."""
+    (rooted / "config.yaml").write_text("mqtt:\n  ip: 10.0.0.1\n")
     with pytest.raises(SystemExit) as exit_info:
-        loadConfig.parse_cli(["--config", "/somewhere/else.yaml"])
-    assert exit_info.value.code != 0
+        loadConfig.get_config("")
+    assert "10.0.0.1" not in str(exit_info.value)
+    assert "empty path" in str(exit_info.value)
+
+
+def test_omitting_the_path_still_uses_the_default(rooted):
+    (rooted / "config.yaml").write_text("mqtt:\n  ip: 10.0.0.1\n")
+    assert loadConfig.get_config()["mqtt"]["ip"] == "10.0.0.1"
+    assert loadConfig.get_config(None)["mqtt"]["ip"] == "10.0.0.1"
+
+
+def test_errors_name_the_config_actually_in_use(tmp_path, rooted):
+    """A service told to use one file must never report about another. Without
+    a resolved path, config_path() would answer with the default and every
+    error would point at a file the service never opened."""
+    other = tmp_path / "instance-2.yaml"
+    other.write_text("mqtt: {}\n")
+    loadConfig.get_config(other)
+    assert loadConfig.config_path() == other
+    with pytest.raises(KeyError, match="instance-2.yaml"):
+        loadConfig.return_config_value("absent")

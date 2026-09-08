@@ -32,12 +32,13 @@ imported by tests without a config file present.
 
 - `service_root()` — the directory the service runs from: beside the binary when
   frozen, the repository root from source
-- `config_path()` — `service_root() / "config.yaml"`, the only place a config
-  is read from
+- `resolve_config_path(supplied)` — the supplied path, or `config.yaml` beside
+  the binary. An empty supplied path is refused, never defaulted
+- `config_path()` — the file actually in use, for error messages
 - `load_yaml(path)` — parses a YAML mapping; `{}` if missing, empty, or not a mapping
 - `get_config()` — the config; exits, naming the directory, if it is absent
 - `return_config_value(key)` — one value; re-reads the file on each call
-- `parse_cli(argv)` — handles `--help` and nothing else
+- `parse_cli(argv)` — handles `--help` and `--config PATH`
 
 A missing config is a hard error rather than an empty dict: the orchestrator
 writes that file when it launches a service, so its absence means the

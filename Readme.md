@@ -36,14 +36,22 @@ python -m pytest test
 
 ## Configuration
 
-**A service reads `config.yaml` from the directory it runs from, and nowhere
-else.** There is no `--config` flag, because there is nothing to choose
-between: service-orchestrator writes that file from its own config, which is
-the single source of truth.
+**A service reads `config.yaml` from the directory it runs from.**
+service-orchestrator writes that file from its own config, which is the single
+source of truth.
 
-| | Where `config.yaml` is read from |
+`--config PATH` overrides it, so **one binary can serve several instances**,
+each pointed at its own file. An **empty** `--config` is refused rather than
+falling back: that reaches a service from an unset shell variable or a launcher
+that dropped an argument, and quietly using the default would start a different
+instance's configuration — the service would come up, look entirely healthy,
+and be the wrong one.
+
+| | Where the config is read from |
 |---|---|
 | deployed | beside the binary, in the service's own directory |
+| `--config PATH` | that file; later reads in the process use it too |
+| `--config ""` | refused, naming the problem |
 | from source | the repository root |
 | missing | the service refuses to start, naming the directory it looked in |
 
