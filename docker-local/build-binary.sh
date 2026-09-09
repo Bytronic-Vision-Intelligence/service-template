@@ -310,7 +310,16 @@ echo "    subscribed  ok"
 # The template publishes nothing (its worker is a placeholder), so it relies on
 # the marker; logging-service republishes, so it does not.
 OUT_TOPIC=$(awk '/is_subscribe: *false/{found=1} /^ *- name:/{t=""} /^ *topic:/{gsub(/^ *topic: *"?|"? *$/,""); t=$0} found&&t{print t; exit}' "$RUN/config.yaml")
-MARKER="${E2E_MARKER:-Request received}"
+# A service that reports differently says so in docker-local/e2e-marker, next
+# to e2e-config.yaml and e2e-assets/. In the script it would be a divergence in
+# a file that is meant to be identical in every repository -- and the last time
+# these drifted, one of them had been packaging every service under the
+# template's name for weeks.
+MARKER="${E2E_MARKER:-}"
+if [ -z "$MARKER" ] && [ -f "$TREE/docker-local/e2e-marker" ]; then
+  MARKER=$(head -1 "$TREE/docker-local/e2e-marker")
+fi
+MARKER="${MARKER:-Request received}"
 
 if [ -n "$OUT_TOPIC" ]; then
   echo "    watching output topic: $OUT_TOPIC"
