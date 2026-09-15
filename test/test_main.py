@@ -8,7 +8,7 @@ import main
 
 
 def make_topics():
-    """The shape shipped in the root config.yaml, plus a non-trigger feed."""
+    """The shape shipped in config.example.yaml, plus a non-trigger feed."""
     return [
         {
             "name": "trigger",
@@ -224,13 +224,13 @@ def test_a_section_present_but_empty_is_refused():
 
 
 def test_the_config_shipped_in_the_repo_satisfies_what_main_requires():
-    """The root config.yaml is what a customer receives beside the binary. If
+    """config.example.yaml is what a customer receives beside the binary. If
     it lacks a key main requires, every fresh install fails on first start."""
     import yaml
     from pathlib import Path
 
     config = yaml.safe_load(
-        (Path(__file__).resolve().parent.parent / "config.yaml").read_text())
+        (Path(__file__).resolve().parent.parent / "config.example.yaml").read_text())
     mqtt = main.require(config, "mqtt")
     main.require(mqtt, "topics")
     main.require(config, "service")
@@ -260,3 +260,25 @@ def test_main_runs_the_config_it_is_given(monkeypatch, tmp_path):
     with pytest.raises(Exception):
         main.main(["--config", str(other)])
     assert seen["mqtt"]["mqtt_ip"] == "10.0.0.2"
+
+
+def test_the_release_ships_the_config_that_is_tracked():
+    """The workflow copies config.example.yaml into the bundle as config.yaml.
+
+    Reading config.yaml instead passes on a developer machine, where
+    service-orchestrator has written one, and fails in CI, where the checkout
+    has only what is tracked - the release job dies at "Verify project
+    structure" and the guard above dies with FileNotFoundError.
+
+    This lives in the template because every service inherits the wiring from
+    it. Three conversions shipped the broken version before anything caught it.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    workflow = (root / ".github/workflows/release-pipeline.yml").read_text(encoding="utf-8")
+
+    assert 'cp config.example.yaml "$output_dir/config.yaml"' in workflow
+    assert "test -f config.example.yaml" in workflow
+    ignored = (root / ".gitignore").read_text().split()
+    assert "/config.yaml" in ignored, "the orchestrator's config.yaml is not ignored"

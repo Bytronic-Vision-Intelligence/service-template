@@ -7,6 +7,11 @@ __pycache__/
 .venv/
 venv/
 
+# Config written into this repo's root by service-orchestrator at startup,
+# one per service instance. Never commit these: a tracked copy is
+# overwritten on every sync and then shows as modified in a tree somebody
+# is about to commit. The shape that ships is config.example.yaml.
+/config.yaml
 /config-*.yaml
 junit/
 .pytest_cache/
