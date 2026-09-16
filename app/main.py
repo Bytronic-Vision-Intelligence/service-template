@@ -101,6 +101,69 @@ def output_topics(topics: list) -> list:
     return [topic["topic"] for topic in topics if not topic.get("is_subscribe")]
 
 
+def topic_named(topics: list, name: str) -> str:
+    """Return the topic string declared under `name`.
+
+    Topics are matched by their `name`, not their position or their text, so a
+    deployment can point this service anywhere without the code knowing which
+    entry carries what.
+
+    Args:
+        topics: the `mqtt.topics` entries.
+        name: the `name:` to find.
+    Raises:
+        SystemExit: when no entry carries that name, or it carries no topic.
+            Refusing here costs a startup; discovering it later means a service
+            that connects, reports itself healthy and publishes into nothing.
+    """
+    for topic in topics:
+        if topic.get("name") != name:
+            continue
+        value = topic.get("topic")
+        if not value:
+            raise SystemExit(
+                f"The topic named '{name}' declares no topic string")
+        return value
+    raise SystemExit(
+        f"No topic named '{name}'. This service looks its topics up by name; "
+        f"add `- name: {name}` under mqtt.topics.")
+
+
+def read_settings(config: dict) -> dict:
+    """Everything this service needs from its configuration, validated up front.
+
+    All of it, before the broker is touched. Read a key inside the loop instead
+    and a config missing it starts the service, connects it, subscribes it, and
+    kills it on the first message that arrives -- which is the worst place to
+    find out, because everything up to then looked healthy. inference-service
+    shipped exactly that with `on_capture`.
+
+    **Extend this when you write your service.** Every `mqtt.topics` name you
+    use and every `service.*` key you read belongs here, resolved with
+    `topic_named` and `require`, so a misconfigured deployment costs a startup
+    rather than a shift. The orchestrator's contract tests find this function by
+    name and check the whole of what it returns; without it they can only check
+    the four keys every service shares.
+
+    Args:
+        config: the whole configuration mapping.
+    Returns:
+        the settings main() runs on.
+    Raises:
+        SystemExit: naming the first key that is missing, and the file.
+    """
+    mqtt_config = require(config, "mqtt")
+    topics = require(mqtt_config, "topics")
+    require(config, "service")
+
+    return {
+        "broker_ip": require(mqtt_config, "mqtt_ip"),
+        "broker_port": require(mqtt_config, "mqtt_port"),
+        "topics": topics,
+        "outputs": output_topics(topics),
+    }
+
+
 def service_process_function(client: MQTTClient, message: dict, outputs: list) -> None:
     """Replace this with your service's work.
 
@@ -123,15 +186,17 @@ def main(argv=None):
     log_settings = config.get("logging") or {}
     logging_setup.configure(log_settings.get("level", logging_setup.DEFAULT_LEVEL))
 
-    mqtt_config = require(config, "mqtt")
-    topics = require(mqtt_config, "topics")
-    require(config, "service")
+    # All of it, before the broker is touched: a missing key then costs a
+    # startup rather than killing the service on its first message.
+    settings = read_settings(config)
+    mqtt_config = config["mqtt"]
+    topics = settings["topics"]
+    outputs = settings["outputs"]
 
     client = MQTTClient(
-        MQTTConfig(host=mqtt_config["mqtt_ip"], port=mqtt_config["mqtt_port"]))
+        MQTTConfig(host=settings["broker_ip"], port=settings["broker_port"]))
     client.connect()
 
-    outputs = output_topics(topics)
     stop_event = Event()
     threads = start_subscribers(mqtt_config, topics, stop_event)
 

@@ -282,3 +282,68 @@ def test_the_release_ships_the_config_that_is_tracked():
     assert "test -f config.example.yaml" in workflow
     ignored = (root / ".gitignore").read_text().split()
     assert "/config.yaml" in ignored, "the orchestrator's config.yaml is not ignored"
+
+
+def test_topic_named_returns_the_topic_declared_under_that_name():
+    assert main.topic_named(make_topics(), "trigger") == "template/worker/trigger"
+    assert main.topic_named(make_topics(), "output") == "template/worker/output"
+
+
+def test_topic_named_exits_naming_the_topic_and_how_to_declare_it():
+    """A service that cannot find its topic should say which one and what to
+    add. Discovering it later means a service that connects, reports itself
+    healthy and publishes into nothing."""
+    with pytest.raises(SystemExit) as excinfo:
+        main.topic_named(make_topics(), "nonexistent")
+
+    message = str(excinfo.value)
+    assert "nonexistent" in message
+    assert "mqtt.topics" in message
+
+
+def test_topic_named_refuses_an_entry_that_declares_no_topic_string():
+    """A name with an empty `topic:` is a half-finished config, not a topic."""
+    with pytest.raises(SystemExit, match="declares no topic"):
+        main.topic_named([{"name": "half_done", "topic": ""}], "half_done")
+
+
+def test_read_settings_returns_everything_main_runs_on():
+    topics = make_topics()
+    config = {
+        "mqtt": {"mqtt_ip": "127.0.0.1", "mqtt_port": 1883, "topics": topics},
+        "service": {},
+    }
+
+    settings = main.read_settings(config)
+
+    assert settings["broker_ip"] == "127.0.0.1"
+    assert settings["broker_port"] == 1883
+    assert settings["topics"] is topics
+    assert settings["outputs"] == main.output_topics(topics)
+
+
+@pytest.mark.parametrize("missing", ["mqtt", "service"])
+def test_read_settings_exits_naming_a_missing_top_level_section(missing):
+    config = {
+        "mqtt": {"mqtt_ip": "127.0.0.1", "mqtt_port": 1883, "topics": []},
+        "service": {},
+    }
+    del config[missing]
+
+    with pytest.raises(SystemExit, match=missing):
+        main.read_settings(config)
+
+
+@pytest.mark.parametrize("missing", ["mqtt_ip", "mqtt_port", "topics"])
+def test_read_settings_exits_naming_a_missing_broker_key(missing):
+    """Before the broker is touched. These used to be subscripted straight out
+    of the mqtt section, so a missing one surfaced as a bare KeyError rather
+    than as a message naming the key and the file."""
+    config = {
+        "mqtt": {"mqtt_ip": "127.0.0.1", "mqtt_port": 1883, "topics": []},
+        "service": {},
+    }
+    del config["mqtt"][missing]
+
+    with pytest.raises(SystemExit, match=missing):
+        main.read_settings(config)
