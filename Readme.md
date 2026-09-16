@@ -22,10 +22,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run it, with a `config.yaml` in the repository root:
+Run it, pointing at a config. `--config` is required: a service runs the one it
+was told to, so it cannot start the wrong instance by finding a stale or example
+file beside it.
 
 ```bash
-python app/main.py     # reads ./config.yaml
+python app/main.py --config ./config.example.yaml
 ```
 
 Run the tests:
@@ -63,9 +65,17 @@ Starting unconfigured would be worse than not starting: the service would come
 up subscribed to nothing, publishing nowhere, and look healthy to anything
 watching it.
 
-The tracked `config.yaml` at the repository root is **not** deployment config.
-It documents the shape a section may take, and the release package ships a copy
-beside the binary as a starting point which the orchestrator then overwrites.
+The tracked `config.example.yaml` at the repository root is **not** deployment
+config. It documents the shape a section may take, and the release package ships
+a copy beside the binary **as `config.yaml`**, a starting point which the
+orchestrator then overwrites.
+
+It is tracked under the `.example` name on purpose: service-orchestrator writes
+a real `config.yaml` into this directory, so a tracked one would be overwritten
+on every sync and then show as modified in a tree somebody is about to commit.
+That is why `/config.yaml` is gitignored here, and why the release workflow
+reads `config.example.yaml` — a workflow that reads `config.yaml` passes on a
+developer machine and fails in CI, where the checkout has only what is tracked.
 
 `app/dependencies/loadConfig.py` exposes `get_config()` and
 `return_config_value(key)`. Prefer a single `get_config()` call — the accessor
@@ -87,6 +97,7 @@ service-orchestrator/
 ├── service-template/    # this repo, cloned
 │   ├── .venv/
 │   ├── config.yaml      # written by the orchestrator, never committed
+│   ├── config.example.yaml  # tracked; the shape, and what the release ships
 │   └── app/main.py
 ```
 
@@ -161,10 +172,9 @@ still fail on GitHub.
 ## Project layout
 
 - `app/` — application code
-  - `main.py` — entrypoint; edit `worker_process_function`
+  - `main.py` — entrypoint; edit `service_process_function`
   - `dependencies/loadConfig.py` — config resolution and access
   - `dependencies/mqtt_functions.py` — subscriber threads
-  - `dependencies/config.yaml` — bundled example config
 - `docs/` — documentation and licence
 - `test/` — pytest suite
 - `tools/` — helper scripts
